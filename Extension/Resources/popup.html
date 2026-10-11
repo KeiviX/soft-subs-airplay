@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Soft Subs</h1>
+    <span id="helper" class="pill">Checking…</span>
+  </header>
+
+  <p id="empty" class="muted" hidden>No video found on this page. Start playing it, then open this again.</p>
+
+  <section id="found" hidden>
+    <div id="video-title" class="title"></div>
+    <div id="video-time" class="muted"></div>
+
+    <label class="field">
+      <span>Stream</span>
+      <select id="stream"></select>
+    </label>
+
+    <fieldset>
+      <legend>Subtitles</legend>
+      <div id="subtitles"></div>
+    </fieldset>
+
+    <button id="send" disabled>Send to TV</button>
+  </section>
+
+  <p id="status" class="muted"></p>
+
+  <script src="subtitles.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

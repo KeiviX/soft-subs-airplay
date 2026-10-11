@@ -1,0 +1,65 @@
+name: SoftSubsAirPlay
+options:
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 9LTVHBV8SK
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: Apple Development
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    ENABLE_HARDENED_RUNTIME: NO
+targets:
+  SoftSubs:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    settings:
+      base:
+        PRODUCT_NAME: Soft Subs
+        PRODUCT_MODULE_NAME: SoftSubs
+        PRODUCT_BUNDLE_IDENTIFIER: com.keivi.softsubs
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Soft Subs
+        LSApplicationCategoryType: public.app-category.entertainment
+        NSLocalNetworkUsageDescription: Soft Subs serves the video and its subtitles to your TV over your local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.keivi.softsubs
+            CFBundleURLSchemes: [softsubs]
+    entitlements:
+      path: App/SoftSubs.entitlements
+      properties: {}
+    dependencies:
+      - target: SoftSubsExtension
+  SoftSubsExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Extension/SafariWebExtensionHandler.swift
+      - path: Extension/Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: Soft Subs Extension
+        PRODUCT_MODULE_NAME: SoftSubsExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.keivi.softsubs.extension
+    info:
+      path: Extension/Info.plist
+      properties:
+        CFBundleDisplayName: Soft Subs AirPlay
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.web-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
+    entitlements:
+      path: Extension/SoftSubsExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
