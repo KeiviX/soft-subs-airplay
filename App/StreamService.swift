@@ -85,6 +85,7 @@ final class StreamService: @unchecked Sendable {
             return .error(404, "Unknown session")
         }
         let rest = parts[2...].joined(separator: "/")
+        DebugLog.log("\(request.isLoopback ? "local" : "lan  ") \(request.method) \(rest.prefix(60))")
 
         switch rest {
         case "master.m3u8":
@@ -121,6 +122,7 @@ final class StreamService: @unchecked Sendable {
                 // With no cues of our own, keep whatever subtitles the stream already carries.
                 return playlist(session.cues.isEmpty ? proxied : Playlist.replacingSubtitles(in: proxied, with: session.subtitleMedia))
             } catch {
+                DebugLog.problem("master playlist \(url.host ?? ""): \(error.localizedDescription)")
                 return .error(502, error.localizedDescription)
             }
         }
@@ -138,9 +140,19 @@ final class StreamService: @unchecked Sendable {
             let (data, response) = try await Upstream.request(url, headers: headers)
             let finalURL = response.url ?? url
             let contentType = response.value(forHTTPHeaderField: "Content-Type") ?? ""
-            if (200..<300).contains(response.statusCode), Playlist.looksLikePlaylist(data, contentType: contentType, url: finalURL) {
+            let name = "\(finalURL.host ?? "")/…/\(finalURL.lastPathComponent)"
+            DebugLog.log("upstream \(response.statusCode) \(contentType) \(data.count)B \(name)")
+            guard (200..<300).contains(response.statusCode) else {
+                DebugLog.problem("\(finalURL.host ?? "the video host") returned HTTP \(response.statusCode) for \(finalURL.lastPathComponent)")
+                return HTTPResponse(status: response.statusCode, body: data)
+            }
+            if Playlist.looksLikePlaylist(data, contentType: contentType, url: finalURL) {
                 let text = String(decoding: data, as: UTF8.self)
                 return playlist(Playlist.rewrite(text, base: finalURL) { self.proxyPath(session, $0) })
+            }
+            if let unwrapped = SegmentSniffer.unwrap(data) {
+                DebugLog.log("unwrapped disguised segment (\(data.count - unwrapped.data.count)B prefix) \(name)")
+                return HTTPResponse(status: 200, headers: ["Content-Type": unwrapped.contentType], body: unwrapped.data)
             }
             var output = HTTPResponse(status: response.statusCode, body: data)
             for name in ["Content-Type", "Content-Range", "Accept-Ranges"] {
@@ -148,6 +160,7 @@ final class StreamService: @unchecked Sendable {
             }
             return output
         } catch {
+            DebugLog.problem("\(url.host ?? "the video host"): \(error.localizedDescription)")
             return .error(502, error.localizedDescription)
         }
     }

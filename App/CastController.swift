@@ -121,7 +121,9 @@ final class CastController: ObservableObject {
             ])
         case ("POST", "/api/cast"):
             do {
+                DebugLog.saveLastCast(request.body)
                 let cast = try JSONDecoder().decode(CastRequest.self, from: request.body)
+                DebugLog.log("cast \(cast.url) subtitles=\(cast.subtitles?.cues.count ?? 0) headers=\(cast.headers?.keys.sorted() ?? [])")
                 return .json(["ok": true, "session": startCast(cast)])
             } catch {
                 return .error(400, "Invalid cast request: \(error.localizedDescription)")
@@ -146,6 +148,7 @@ final class CastController: ObservableObject {
         stop()
         let id = UUID().uuidString.lowercased()
         sessionID = id
+        _ = DebugLog.takeProblem()
         title = request.title ?? "Video"
         subtitleOffset = 0
         subtitlesOn = !(request.subtitlesOff ?? false)
@@ -222,6 +225,7 @@ final class CastController: ObservableObject {
             phase = .playing
         } catch is CancellationError {
         } catch {
+            DebugLog.log("cast failed: \(error.localizedDescription)")
             if sessionID == id { phase = .failed(error.localizedDescription) }
         }
     }
@@ -237,7 +241,12 @@ final class CastController: ObservableObject {
             try await Task.sleep(for: .milliseconds(200))
         }
         if item.status != .readyToPlay {
-            throw CastError.playbackFailed(item.error?.localizedDescription ?? "the stream didn't load in time")
+            var reason = item.error?.localizedDescription ?? "the stream didn't load in time"
+            if let event = item.errorLog()?.events.last {
+                DebugLog.log("AVPlayer error \(event.errorStatusCode) \(event.errorDomain): \(event.errorComment ?? "") \(event.uri ?? "")")
+            }
+            if let problem = DebugLog.takeProblem() { reason += " (\(problem))" }
+            throw CastError.playbackFailed(reason)
         }
         await applySubtitleSelection()
         if let time, time.seconds > 1 {
