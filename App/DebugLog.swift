@@ -44,13 +44,14 @@ enum DebugLog {
     }
 }
 
-/// Some sites disguise HLS segments as images: fake PNG/JPEG bytes in front of the real MPEG-TS data.
-/// Browsers' hls.js tolerates that; AVPlayer and the TV don't, so strip the prefix.
+/// Some sites disguise HLS segments as images: `.jpg` names, an `image/jpeg` type, sometimes fake PNG/JPEG
+/// bytes in front of the real MPEG-TS data. hls.js tolerates that; AVPlayer and the TV don't, so find the
+/// TS data and label it properly. Returns nil for anything that isn't MPEG-TS.
 enum SegmentSniffer {
     static func unwrap(_ data: Data) -> (data: Data, contentType: String)? {
         let bytes = [UInt8](data.prefix(64 * 1024))
         guard bytes.count > 188 * 3 else { return nil }
-        if isTS(bytes, at: 0) { return nil }
+        if isTS(bytes, at: 0) { return (data, "video/mp2t") }
         if bytes.count > 8, String(decoding: bytes[4..<8], as: UTF8.self).range(of: "^(ftyp|styp|moof|sidx)$", options: .regularExpression) != nil {
             return nil
         }
@@ -60,7 +61,7 @@ enum SegmentSniffer {
         return nil
     }
 
-    private static func isTS(_ bytes: [UInt8], at offset: Int) -> Bool {
+    static func isTS(_ bytes: [UInt8], at offset: Int) -> Bool {
         offset + 376 < bytes.count && bytes[offset] == 0x47 && bytes[offset + 188] == 0x47 && bytes[offset + 376] == 0x47
     }
 }

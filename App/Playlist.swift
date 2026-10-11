@@ -60,9 +60,20 @@ enum Playlist {
 
     static func subtitleMedia(name: String, language: String, uri: String) -> String {
         let name = name.replacingOccurrences(of: "\"", with: "'")
-        let language = language.isEmpty ? "und" : language.replacingOccurrences(of: "\"", with: "")
+        let language = languageTag(language) ?? languageTag(name) ?? "und"
         return "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"\(subtitleGroup)\",NAME=\"\(name)\",LANGUAGE=\"\(language)\","
             + "DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,URI=\"\(uri)\""
+    }
+
+    /// A BCP 47 tag for values like "en", "pt-BR", "English" or "CR English", so the TV can name the track.
+    static func languageTag(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil { return trimmed }
+        let english = Locale(identifier: "en")
+        let words = Set(trimmed.lowercased().split { !$0.isLetter }.map(String.init))
+        return Locale.LanguageCode.isoLanguageCodes.first { code in
+            code.identifier.count == 2 && english.localizedString(forLanguageCode: code.identifier).map { words.contains($0.lowercased()) } == true
+        }?.identifier
     }
 
     /// Removes the stream's own subtitle renditions and points every variant at `media` instead.

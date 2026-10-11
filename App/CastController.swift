@@ -213,6 +213,7 @@ final class CastController: ObservableObject {
             let probe = await MediaProbe.probe(probeURL, headers: headers)
             session.duration = max(probe.duration, request.duration ?? 0)
             session.timestampBase = UInt64(max(0, probe.startTime ?? 0) * 90_000)
+            DebugLog.log("probe duration=\(probe.duration) start=\(probe.startTime.map { String($0) } ?? "unknown") cues=\(cues.count)")
             try Task.checkCancellation()
 
             store.put(session)

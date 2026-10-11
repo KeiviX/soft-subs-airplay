@@ -19,6 +19,8 @@ struct CastSession {
     var timestampBase: UInt64 = 0
     var duration = 0.0
     var version = 0
+    /// The source master playlist as first fetched; signed stream URLs often expire within minutes.
+    var masterCache: (data: Data, url: URL)?
 
     var pathPrefix: String { "/s/\(id)" }
     var subtitleMedia: String? {
@@ -55,6 +57,17 @@ enum Upstream {
     }()
 
     static func request(_ url: URL, headers: [String: String]) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await send(url, headers: headers)
+        guard [401, 403].contains(response.statusCode), let referer = headers["Referer"].flatMap(URL.init(string:)),
+              let scheme = referer.scheme, let host = referer.host else { return (data, response) }
+        let origin = "\(scheme)://\(host)" + (referer.port.map { ":\($0)" } ?? "")
+        guard referer.absoluteString != origin + "/" else { return (data, response) }
+        var retry = headers
+        retry["Referer"] = origin + "/"
+        return try await send(url, headers: retry)
+    }
+
+    private static func send(_ url: URL, headers: [String: String]) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let (data, response) = try await session.data(for: request)
@@ -113,7 +126,13 @@ final class StreamService: @unchecked Sendable {
             return playlist(Playlist.syntheticMaster(mediaURI: "\(session.pathPrefix)/local/index.m3u8", subtitles: session.subtitleMedia))
         case .hls(let url):
             do {
-                let (data, finalURL) = try await Upstream.load(url, headers: session.headers)
+                let (data, finalURL): (Data, URL)
+                if let cached = session.masterCache {
+                    (data, finalURL) = cached
+                } else {
+                    (data, finalURL) = try await Upstream.load(url, headers: session.headers)
+                    store.update(session.id) { $0.masterCache = (data, finalURL) }
+                }
                 let text = String(decoding: data, as: UTF8.self)
                 guard Playlist.isMaster(text) else {
                     return playlist(Playlist.syntheticMaster(mediaURI: proxyPath(session, finalURL), subtitles: session.subtitleMedia))
@@ -150,9 +169,13 @@ final class StreamService: @unchecked Sendable {
                 let text = String(decoding: data, as: UTF8.self)
                 return playlist(Playlist.rewrite(text, base: finalURL) { self.proxyPath(session, $0) })
             }
-            if let unwrapped = SegmentSniffer.unwrap(data) {
-                DebugLog.log("unwrapped disguised segment (\(data.count - unwrapped.data.count)B prefix) \(name)")
-                return HTTPResponse(status: 200, headers: ["Content-Type": unwrapped.contentType], body: unwrapped.data)
+            if !contentType.lowercased().contains("mp2t"), let unwrapped = SegmentSniffer.unwrap(data) {
+                DebugLog.log("disguised TS segment (\(contentType), \(data.count - unwrapped.data.count)B prefix) \(name)")
+                var output = HTTPResponse(status: response.statusCode, headers: ["Content-Type": unwrapped.contentType], body: unwrapped.data)
+                if unwrapped.data.count == data.count, let range = response.value(forHTTPHeaderField: "Content-Range") {
+                    output.headers["Content-Range"] = range
+                }
+                return output
             }
             var output = HTTPResponse(status: response.statusCode, body: data)
             for name in ["Content-Type", "Content-Range", "Accept-Ranges"] {

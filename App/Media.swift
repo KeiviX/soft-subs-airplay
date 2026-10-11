@@ -105,7 +105,9 @@ enum MediaProbe {
                 media += try await Upstream.load(initSection.url, headers: headers.with(range: initSection.range)).0
             }
             media += try await Upstream.load(segment, headers: headers.with(range: Playlist.firstSegmentRange(in: text))).0
-            result.startTime = await startTime(of: media, fileExtension: segment.pathExtension)
+            let isTS = SegmentSniffer.unwrap(media) != nil
+            result.startTime = await startTime(of: SegmentSniffer.unwrap(media)?.data ?? media,
+                                               fileExtension: isTS ? "ts" : segment.pathExtension)
             return result
         } catch {
             return Result()

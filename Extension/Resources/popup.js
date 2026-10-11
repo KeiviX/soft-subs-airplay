@@ -177,8 +177,11 @@ function render() {
 async function buildHeaders(url) {
   const headers = { 'User-Agent': navigator.userAgent };
   try {
-    headers.Referer = frame.pageUrl;
-    headers.Origin = new URL(frame.pageUrl).origin;
+    // Match Safari's default referrer policy: cross-site requests only carry the page's origin.
+    // Many video hosts reject a full page URL as hotlinking.
+    const page = new URL(frame.pageUrl);
+    headers.Referer = page.origin === new URL(url).origin ? page.href : `${page.origin}/`;
+    headers.Origin = page.origin;
   } catch {}
   try {
     const cookies = await api.cookies.getAll({ url });
