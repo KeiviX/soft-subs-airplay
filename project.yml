@@ -5,9 +5,9 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    DEVELOPMENT_TEAM: 9LTVHBV8SK
+    # Ad-hoc by default; build.sh switches to your own Apple Development certificate when you have one.
     CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: Apple Development
+    CODE_SIGN_IDENTITY: "-"
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1

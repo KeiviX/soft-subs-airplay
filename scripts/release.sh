@@ -32,6 +32,7 @@ if [[ -n $DEVELOPER_ID ]]; then
     echo "Signing with $DEVELOPER_ID"
     cat >> "$CONFIG" <<CONFIG
 CODE_SIGN_IDENTITY = Developer ID Application
+DEVELOPMENT_TEAM = $(security find-certificate -c "$DEVELOPER_ID" -p | openssl x509 -noout -subject | sed -n 's/.*OU=\([A-Z0-9]*\).*/\1/p')
 ENABLE_HARDENED_RUNTIME = YES
 OTHER_CODE_SIGN_FLAGS = --timestamp
 CONFIG

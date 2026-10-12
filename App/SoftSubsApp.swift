@@ -6,11 +6,13 @@ import SwiftUI
 struct SoftSubsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var cast = CastController()
+    @StateObject private var safariExtension = SafariExtensionStatus()
 
     var body: some Scene {
         Window("Soft Subs", id: "main") {
             ContentView()
                 .environmentObject(cast)
+                .environmentObject(safariExtension)
                 .onOpenURL { _ in NSApp.activate() }
         }
         .windowResizability(.contentMinSize)
@@ -24,9 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ContentView: View {
     @EnvironmentObject private var cast: CastController
+    @EnvironmentObject private var safariExtension: SafariExtensionStatus
 
     var body: some View {
         VStack(spacing: 0) {
+            if !safariExtension.isEnabled {
+                ExtensionBanner(status: safariExtension)
+            }
             VideoPlayer(player: cast.player)
                 .overlay {
                     if cast.phase == .idle {
@@ -132,5 +138,30 @@ struct TVButtons: View {
         if display.isShowing { return "Press Esc on it to close." }
         if display.externalScreenName != nil { return "Fallback if AirPlay doesn't show the video." }
         return "Fallback: mirror your screen to the TV (Control Center → Screen Mirroring), then use this."
+    }
+}
+
+struct ExtensionBanner: View {
+    @ObservedObject var status: SafariExtensionStatus
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Turn on the Soft Subs extension in Safari")
+                    .font(.headline)
+                Text("Enable it and set it to Allow on every website. Not listed? Safari → Settings → Advanced → "
+                     + "Show features for web developers, then Develop → Allow Unsigned Extensions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Open Safari Settings", action: status.openSafariSettings)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12))
     }
 }
