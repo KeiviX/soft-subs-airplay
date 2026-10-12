@@ -7,3 +7,4 @@ App/Info.plist
 App/SoftSubs.entitlements
 Extension/Info.plist
 Extension/SoftSubsExtension.entitlements
+dist/

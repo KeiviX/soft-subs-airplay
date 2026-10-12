@@ -23,14 +23,31 @@ Safari extension ──(stream URL, subtitle cues, cookies/referer)──▶ Sof
                                                                     │   the page's headers (the TV has no cookies)
                                                                     │ • MP4/DASH → repackaged to HLS by ffmpeg (no re-encode)
                                                                     ▼
-                                                     AVPlayer + AirPlay picker ──▶ Apple TV / AirPlay 2 TV
+                                                     AVPlayer (AirPlay button in its controls) ──▶ Apple TV / AirPlay 2 TV
 ```
 
 The TV gets a normal HLS stream with a real subtitle track, so it renders the subtitles itself, using your caption style settings.
 
 **Timing:** the browser's `currentTime = 0` is the stream's first presentation timestamp, which is often 10 s for TS streams. The app measures that timestamp with `ffprobe` and writes it into each WebVTT segment's `X-TIMESTAMP-MAP`, so cues line up. If they're still off, nudge them with **Timing −/+** in the app.
 
-## Setup
+## Install (from a release)
+
+1. Download the latest **SoftSubs-x.y.z.zip** from [Releases](../../releases), unzip it, and move **Soft Subs** to Applications.
+2. Open it. If macOS says it can't verify the developer: **System Settings → Privacy & Security → Open Anyway**. You only need to do this once.
+3. In Safari: **Settings → Extensions** → enable **Soft Subs AirPlay** → **Allow on every website**.
+   If it isn't listed (builds that aren't notarized): **Settings → Advanced → Show features for web developers**, then **Develop → Allow Unsigned Extensions**. Safari turns this off again when it quits.
+4. Optional, for MP4/DASH videos and exact subtitle timing: `brew install ffmpeg`.
+
+## Releasing
+
+```bash
+scripts/release.sh 0.2.0 --dry-run   # build + zip into dist/
+scripts/release.sh 0.2.0             # also bumps versions, tags v0.2.0 and publishes a GitHub release
+```
+
+The script signs with a **Developer ID Application** certificate when one is in your keychain, which needs the paid Apple Developer Program. With `NOTARY_PROFILE` set to a `xcrun notarytool store-credentials` profile, it also notarizes the build. That removes both manual steps above. Without one, it signs with your Apple Development certificate.
+
+## Build from source
 
 ```bash
 brew install xcodegen ffmpeg
@@ -50,7 +67,7 @@ Then in Safari:
    - tracks from the page (`<track>` files and loaded text-track cues)
    - subtitle files seen on the network (VTT, SRT, TTML/DFXP)
    - *Stream's own subtitles*, for HLS streams that already carry them
-3. Click **Send to TV**. The Soft Subs window comes forward. Pick your TV with the AirPlay button; after that, it stays selected for later casts.
+3. Click **Send to TV**. The Soft Subs window comes forward. Click the **AirPlay button in the video controls** and pick your TV. If your TV only shows the picture with screen mirroring, mirror to it and use **Full screen / Show on TV** instead.
 
 `scripts/smoke-test.sh [stream-url]` casts a test stream with sample cues through the running app and prints the rebuilt playlists.
 
