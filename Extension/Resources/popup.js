@@ -217,7 +217,7 @@ async function loadDevices(refresh = false) {
 }
 
 function renderDevices(result) {
-  devices = [...result.devices].sort((a, b) => (a.kind === 'airplay' ? 0 : 1) - (b.kind === 'airplay' ? 0 : 1));
+  devices = result.devices;
   const select = $('device');
   const previous = select.value;
   const saved = localStorage.getItem('softsubs:device');
@@ -225,13 +225,11 @@ function renderDevices(result) {
   for (const device of devices) {
     const option = document.createElement('option');
     option.value = device.id;
-    option.textContent = `${device.name} · ${device.kind === 'airplay' ? 'AirPlay' : 'Chromecast'}`
-      + (device.needsPairing ? ' (pair first)' : '');
+    option.textContent = device.name;
     select.append(option);
   }
-  // Keep the current or last-used TV; otherwise prefer AirPlay (Chromecast is the fallback).
-  const pick = [previous, saved].find((id) => devices.some((d) => d.id === id))
-    ?? devices.find((d) => d.kind === 'airplay')?.id ?? devices[0]?.id;
+  // Keep the current or last-used TV; otherwise the first one found.
+  const pick = [previous, saved].find((id) => devices.some((d) => d.id === id)) ?? devices[0]?.id;
   if (pick) select.value = pick;
   $('no-tvs').hidden = devices.length > 0 || result.scanning;
   $('searching').hidden = !result.scanning;
@@ -244,9 +242,7 @@ function selectedDevice() {
 
 function updateSendLabel() {
   const device = selectedDevice();
-  $('send').textContent = !devices ? 'Send to TV'
-    : !device ? 'Choose a TV'
-    : device.needsPairing ? `Pair with ${device.name}…` : `Send to ${device.name}`;
+  $('send').textContent = !devices ? 'Send to TV' : device ? `Send to ${device.name}` : 'Choose a TV';
   if (devices) $('send').disabled = !device || !$('stream').value;
 }
 
@@ -256,10 +252,6 @@ function openPanel() {
 
 async function send() {
   const device = selectedDevice();
-  if (devices && device?.needsPairing) {
-    openPanel();
-    return;
-  }
   if (device) localStorage.setItem('softsubs:device', device.id);
   const url = $('stream').value;
   const selectedId = document.querySelector('input[name="subtitles"]:checked')?.value;

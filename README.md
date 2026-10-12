@@ -1,6 +1,6 @@
 # Soft Subs AirPlay
 
-Cast web videos to your TV, **with their subtitles**: from Safari on a Mac via AirPlay, or from Chrome on Windows to AirPlay and Chromecast TVs.
+Cast web videos to your TV, **with their subtitles**: from Safari on a Mac via AirPlay, or from Chrome on Windows to Chromecast TVs.
 
 Normal AirPlay drops the subtitles on most sites. Soft Subs rebuilds the video stream with the subtitles inside it, so your TV shows them as real, toggleable subtitles.
 
@@ -37,7 +37,9 @@ Installer options: `… | bash -s -- --source` builds from source; `--no-ffmpeg`
 
 ## Windows (Chrome)
 
-On Windows, the Soft Subs helper sends the video to the TV itself: **AirPlay** TVs (Apple TV, Samsung, LG, Sony…) and **Chromecast** TVs (Google TV / Android TV sets, Chromecast dongles).
+On Windows, the Soft Subs helper casts to **Chromecast** TVs: sets with Chromecast built in (Google TV / Android TV, such as Sony, Philips, TCL and Hisense) and Chromecast dongles. No pairing is needed.
+
+TVs without Chromecast (Samsung, LG) aren't supported from Windows yet. Chrome's own **Cast** button (⋮ → Cast…) and Windows screen mirroring (**Win + K**) still work for them, as they mirror whatever is on screen, subtitles included.
 
 ### Install
 
@@ -55,11 +57,10 @@ On Windows, the Soft Subs helper sends the video to the TV itself: **AirPlay** T
 
 1. Play the video with its subtitles on, then click the **Soft Subs** button in Chrome.
 2. Choose the stream, the subtitles and your **TV**, then click **Send to <TV>**.
-3. AirPlay TVs come first in the list. **They ask for a PIN the first time.** Click *Pair & manage TVs* in the popup (or the tray icon → Open Soft Subs), click **Pair**, then type the PIN the TV shows.
-4. The control panel (tray icon → *Open Soft Subs*) has subtitles on/off, timing −/+ and Stop.
-5. TV not showing up? The panel explains common causes (Public network, VM on NAT). You can also add the TV by its **IP address**, found under the TV's network settings.
+3. The control panel (tray icon → *Open Soft Subs*) has subtitles on/off, timing −/+ and Stop.
+4. TV not showing up? The panel explains common causes (Public network, VM on NAT). You can also add the TV by its **IP address**, found under the TV's network settings.
 
-> **Status:** the Windows version is new. AirPlay from Windows uses the open-source [pyatv](https://pyatv.dev) library, and non-Apple TVs differ in what they accept. If one TV refuses AirPlay but also has Chromecast, pick its Chromecast entry. The log is in `%LOCALAPPDATA%\SoftSubs\soft-subs.log`.
+> **Status:** the Windows version is new. The log is in `%LOCALAPPDATA%\SoftSubs\soft-subs.log`.
 
 ## Updating
 
@@ -76,7 +77,7 @@ Coming from 0.1.0? Install 0.1.1 manually once; it has the updater.
 | macOS | 15 Sequoia or later, Apple silicon or Intel |
 | Windows | Windows 10 or 11 (x64; ARM64 runs it through emulation), Chrome or Edge 111+ |
 | Browser | Safari on Mac; Chrome or Edge on Windows |
-| TV | Mac: an AirPlay receiver (Apple TV, or an AirPlay 2 TV from Samsung, LG, Sony, Vizio…). Windows: AirPlay or Chromecast. Same network as the computer |
+| TV | Mac: an AirPlay receiver (Apple TV, or an AirPlay 2 TV from Samsung, LG, Sony, Vizio…). Windows: a TV with Chromecast built in, or a Chromecast dongle. Same network as the computer |
 | ffmpeg | Mac: optional but recommended (`brew install ffmpeg`), needed for MP4/DASH sources and exact subtitle timing. Windows: bundled |
 | Building from source | Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) |
 
@@ -139,7 +140,7 @@ The Windows helper also runs on a Mac for development (`pip install -r windows/r
 | `project.yml` | XcodeGen spec |
 | `install.sh` | One-line installer |
 | `scripts/release.sh` | Builds, zips and publishes a GitHub release (the Windows workflow then attaches its installer) |
-| `windows/` | Windows helper (Python): `softsubs/server.py` (API + proxy), `hls.py`, `media.py`, `receivers.py` (AirPlay via pyatv, Chromecast), `panel.html`; `build.ps1` + `installer.iss` build the installer |
+| `windows/` | Windows helper (Python): `softsubs/server.py` (API + proxy), `hls.py`, `media.py`, `receivers.py` (Chromecast), `panel.html`; `build.ps1` + `installer.iss` build the installer |
 | `scripts/build_chrome.py` | Packages the extension for Chrome |
 | `.github/workflows/windows.yml` | Builds, tests and smoke-tests the Windows installer; attaches it to releases |
 

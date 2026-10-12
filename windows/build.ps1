@@ -25,7 +25,7 @@ python -m PyInstaller --noconfirm --clean --windowed --name SoftSubs --icon "$PS
     --distpath build\dist --workpath build\work --specpath build `
     --add-data "$PSScriptRoot\softsubs\panel.html;softsubs" `
     --add-binary "$PSScriptRoot\ffmpeg\ffmpeg.exe;ffmpeg" --add-binary "$PSScriptRoot\ffmpeg\ffprobe.exe;ffmpeg" `
-    --collect-all pyatv --collect-all pychromecast --collect-submodules zeroconf --hidden-import pystray._win32 `
+    --collect-all pychromecast --collect-submodules zeroconf --hidden-import pystray._win32 `
     launcher.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 

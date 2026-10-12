@@ -65,8 +65,8 @@
     <input id="address" type="text" placeholder="192.168.1.50" style="width: 130px; letter-spacing: 0">
     <button>Add</button>
   </form>
-  <p class="muted">AirPlay TVs show a PIN the first time; Chromecast TVs need no pairing. The TV and this
-    computer must be on the same network. A TV's IP address is usually under Settings → Network on the TV.</p>
+  <p class="muted">Soft Subs casts to TVs with Chromecast built in (Google TV / Android TV) and to Chromecast
+    dongles. The TV and this computer must be on the same network. A TV's IP address is usually under Settings → Network on the TV.</p>
 
   <h2>Help</h2>
   <p class="muted" id="footer"></p>
@@ -146,43 +146,15 @@ function renderDevices(devices) {
     name.textContent = device.name;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = device.kind === 'airplay' ? 'AirPlay' : 'Chromecast';
+    tag.textContent = 'Chromecast';
     row.append(name, tag);
 
-    if (device.needsPairing) {
-      const pair = document.createElement('button');
-      pair.textContent = 'Pair';
-      const pin = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'PIN', hidden: true, maxLength: 4 });
-      const confirm = Object.assign(document.createElement('button'), { textContent: 'OK', hidden: true, className: 'primary' });
-      pair.onclick = async () => {
-        pair.disabled = true;
-        try {
-          await api('pair', { device: device.id });
-          pin.hidden = confirm.hidden = false;
-          pair.hidden = true;
-          pin.focus();
-        } catch (error) {
-          alert(error.message);
-          pair.disabled = false;
-        }
-      };
-      confirm.onclick = async () => {
-        try {
-          await api('pair', { device: device.id, pin: pin.value.trim() });
-          loadDevices(true);
-        } catch (error) {
-          alert(error.message);
-        }
-      };
-      row.append(pin, confirm, pair);
-    } else {
-      const send = document.createElement('button');
-      send.className = status.deviceId === device.id && status.onTV ? '' : 'primary';
-      send.textContent = status.deviceId === device.id && status.onTV ? 'Playing' : 'Play here';
-      send.disabled = !['playing', 'ready'].includes(status.state);
-      send.onclick = () => api('send', { device: device.id }).catch((error) => alert(error.message));
-      row.append(send);
-    }
+    const send = document.createElement('button');
+    send.className = status.deviceId === device.id && status.onTV ? '' : 'primary';
+    send.textContent = status.deviceId === device.id && status.onTV ? 'Playing' : 'Play here';
+    send.disabled = !['playing', 'ready'].includes(status.state);
+    send.onclick = () => api('send', { device: device.id }).catch((error) => alert(error.message));
+    row.append(send);
     list.append(row);
   }
 }

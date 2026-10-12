@@ -165,27 +165,20 @@ class Controller:
         if not address:
             raise media.UpstreamError("This computer isn't on a local network, so the TV can't reach it.")
         base = f"http://{address}:{self.port}{session.prefix}"
-        is_cast = device.kind == "chromecast"
-        # Chromecast gets the subtitles as one sidecar file it can switch on and off; AirPlay TVs get them
-        # inside the stream, and turning them off means reloading without them.
-        include_in_stream = self.subtitles_on and not is_cast
-        master = f"{base}/master.m3u8?v={session.version}&subs={int(include_in_stream)}"
-        sidecar = f"{base}/subs.vtt?v={session.version}" if is_cast and session.cues else None
+        # Chromecast gets the subtitles as one sidecar file it can switch on and off, so the stream itself
+        # goes without our subtitle rendition.
+        master = f"{base}/master.m3u8?v={session.version}&subs=0"
+        sidecar = f"{base}/subs.vtt?v={session.version}" if session.cues else None
         self._set("preparing", f"Starting on {device.name}…")
         take_problem()
         try:
-            self.playback = await self.receivers.play(device, master, sidecar, start, session.title, self._finished)
+            self.playback = await self.receivers.play(device, master, sidecar, start, session.title)
         except Exception as error:
             upstream = take_problem()
             raise RuntimeError(_describe(error) + (f" ({upstream})" if upstream else "")) from error
-        if is_cast and not self.subtitles_on:
+        if not self.subtitles_on:
             await self.playback.set_subtitles(False)
         self._set("playing", f"Playing on {device.name}.")
-
-    def _finished(self, error) -> None:
-        if self.phase == "playing":
-            self._set("failed" if error else "idle", f"{_describe(error)}" if error else "Finished playing.")
-        self.playback = None
 
     async def set_subtitles(self, on: bool) -> None:
         self.subtitles_on = on
@@ -306,12 +299,6 @@ def create_app(controller: Controller) -> web.Application:
                     await controller.updater.install()
                     return _json({"ok": True})
                 return _json({"ok": True, **await controller.updater.check(force=bool(request.query.get("force")))})
-            if name == "pair":
-                if data.get("pin"):
-                    paired = await controller.receivers.finish_pairing(data["device"], str(data["pin"]))
-                    return _json({"ok": paired, **({} if paired else {"error": "Wrong PIN, try again."})})
-                await controller.receivers.begin_pairing(data["device"])
-                return _json({"ok": True})
         except Exception as error:
             log(f"api {name} failed: {error!r}")
             controller.message = _describe(error)
