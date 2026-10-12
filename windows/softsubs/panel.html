@@ -114,7 +114,8 @@ function diagnose() {
   if (!address) reasons.push('This computer isn\u2019t connected to a local network.');
   if (address && /^10\.0\.2\.|^192\.168\.(64|65|122)\.|^172\.(1[6-9]|2\d|3[01])\./.test(address)) {
     reasons.push(`This PC\u2019s address (${address}) looks like a virtual machine on NAT/shared networking. ` +
-      'Switch the VM to bridged networking so it sits on the same network as the TV.');
+      'From there the TV can\u2019t be found and can\u2019t connect back for the video, even if added by IP. ' +
+      'Switch the VM to bridged networking, or use a real Windows PC.');
   }
   if (status.networkCategory === 'Public') {
     reasons.push('Windows treats this network as Public, which blocks finding TVs and the TV\u2019s connection. ' +
