@@ -6,6 +6,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let tab;
 let frame;
 let choices = [];
+let devices = null; // Windows helper only: TVs it can send to. The Mac app uses macOS AirPlay instead.
+const isSafari = typeof api.runtime.sendNativeMessage === 'function' && !!globalThis.browser;
 
 async function helper(path, body) {
   const response = await fetch(HELPER + path, body
@@ -21,15 +23,21 @@ function setHelper(text, tone) {
   $('helper').className = `pill ${tone}`;
 }
 
-// The helper app hosts the stream for the TV. If it isn't running, ask the extension's native
-// handler to launch it, then wait for its server to come up.
+// The helper app hosts the stream for the TV. If it isn't running, launch it (Safari: through the
+// extension's native handler; Chrome on Windows: through the softsubs:// link the installer registers),
+// then wait for its server to come up.
 async function ensureHelper() {
   try {
     return await helper('/api/status');
   } catch {}
   setHelper('Starting app…', 'warn');
   try {
-    await api.runtime.sendNativeMessage('com.keivi.softsubs', { action: 'launchApp' });
+    if (isSafari) {
+      await api.runtime.sendNativeMessage('com.keivi.softsubs', { action: 'launchApp' });
+    } else {
+      const launcher = await api.tabs.create({ url: 'softsubs://start', active: false });
+      setTimeout(() => api.tabs.remove(launcher.id).catch(() => {}), 3000);
+    }
   } catch {}
   for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(500);
@@ -190,7 +198,49 @@ async function buildHeaders(url) {
   return headers;
 }
 
+async function loadDevices(refresh = false) {
+  const select = $('device');
+  try {
+    devices = (await helper(`/api/devices${refresh ? '?refresh=1' : ''}`)).devices;
+  } catch (error) {
+    devices = [];
+  }
+  const saved = localStorage.getItem('softsubs:device');
+  select.replaceChildren();
+  for (const device of devices) {
+    const option = document.createElement('option');
+    option.value = device.id;
+    option.textContent = `${device.name} · ${device.kind === 'airplay' ? 'AirPlay' : 'Chromecast'}`
+      + (device.needsPairing ? ' (pair first)' : '');
+    option.selected = device.id === saved;
+    select.append(option);
+  }
+  $('tv').hidden = false;
+  $('no-tvs').hidden = devices.length > 0;
+  updateSendLabel();
+}
+
+function selectedDevice() {
+  return devices?.find((d) => d.id === $('device').value) ?? null;
+}
+
+function updateSendLabel() {
+  const device = selectedDevice();
+  $('send').textContent = devices ? (device ? `Send to ${device.name}` : 'No TV selected') : 'Send to TV';
+  if (devices) $('send').disabled = !device || !$('stream').value;
+}
+
+function openPanel() {
+  api.tabs.create({ url: `${HELPER}/` });
+}
+
 async function send() {
+  const device = selectedDevice();
+  if (devices && device?.needsPairing) {
+    openPanel();
+    return;
+  }
+  if (device) localStorage.setItem('softsubs:device', device.id);
   const url = $('stream').value;
   const selectedId = document.querySelector('input[name="subtitles"]:checked')?.value;
   const choice = choices.find((c) => c.id === selectedId) ?? choices[choices.length - 1];
@@ -221,6 +271,7 @@ async function send() {
       subtitles,
       subtitlesOff: !!choice.none,
       preferredLanguage: choice.language || null,
+      device: device?.id,
     });
     Promise.resolve(api.tabs.sendMessage(tab.id, { type: 'softsubs:pause', frameKey: frame.frameKey })).catch(() => {});
     watchStatus();
@@ -234,7 +285,7 @@ async function watchStatus() {
   for (;;) {
     try {
       const status = await helper('/api/status');
-      $('status').textContent = status.playing && !status.onTV
+      $('status').textContent = status.platform !== 'windows' && status.playing && !status.onTV
         ? 'Playing on your Mac. Click the AirPlay button in the Soft Subs video controls.'
         : status.phase;
     } catch {
@@ -253,7 +304,13 @@ async function main() {
     setHelper(status.ffmpeg ? 'App ready' : 'App ready · no ffmpeg', status.ffmpeg ? 'ok' : 'warn');
   } else {
     setHelper('App not running', 'bad');
-    $('status').textContent = 'Open the Soft Subs app, then try again.';
+    $('status').textContent = 'Open the Soft Subs app (Start menu on Windows, Applications on Mac), then try again.';
+  }
+  if (status?.features?.includes('devices')) {
+    $('device').onchange = updateSendLabel;
+    $('refresh-tvs').onclick = () => loadDevices(true);
+    $('manage-tvs').onclick = openPanel;
+    await loadDevices();
   }
 
   frame = pickFrame(frames);
@@ -262,6 +319,7 @@ async function main() {
     return;
   }
   render();
+  updateSendLabel();
   if (!status) $('send').disabled = true;
 }
 

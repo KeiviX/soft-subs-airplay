@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Soft Subs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; --accent: #5b4cf0; --border: color-mix(in srgb, currentColor 16%, transparent); }
+    body { margin: 0; font: 14px/1.45 system-ui, "Segoe UI", sans-serif; display: grid; place-items: start center; }
+    main { width: min(560px, 100% - 32px); padding: 28px 0 40px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin: 26px 0 8px;
+         color: color-mix(in srgb, currentColor 60%, transparent); }
+    .muted { color: color-mix(in srgb, currentColor 60%, transparent); }
+    .card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+    .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .failed { color: #d33; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .device { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+    .device:first-child { border-top: 0; }
+    .device .name { flex: 1; }
+    .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, currentColor 10%, transparent); }
+    button { font: inherit; font-weight: 600; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+             background: transparent; color: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button:disabled { opacity: .5; cursor: default; }
+    input[type=text] { font: inherit; width: 70px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border);
+                       background: transparent; color: inherit; letter-spacing: .2em; }
+    .offset { font-variant-numeric: tabular-nums; min-width: 64px; text-align: center; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Soft Subs</h1>
+  <div class="muted">Cast web videos to your TV with their subtitles.</div>
+
+  <h2>Now playing</h2>
+  <div class="card">
+    <div id="title" class="title">Nothing playing</div>
+    <div id="phase" class="muted"></div>
+    <div id="controls" class="row" style="margin-top: 12px" hidden>
+      <label class="row"><input id="subs" type="checkbox"> Subtitles</label>
+      <span style="flex: 1"></span>
+      <span class="muted">Timing</span>
+      <button data-nudge="-0.25" title="Show subtitles 0.25 s earlier">−</button>
+      <span id="offset" class="offset">+0.00 s</span>
+      <button data-nudge="0.25" title="Show subtitles 0.25 s later">+</button>
+      <button id="stop">Stop</button>
+    </div>
+  </div>
+
+  <h2 class="row">TVs <button id="refresh" style="font-size: 12px; padding: 2px 8px">Refresh</button></h2>
+  <div id="devices" class="card"><span class="muted">Looking for TVs…</span></div>
+  <p class="muted">AirPlay TVs show a PIN the first time; Chromecast TVs need no pairing. The TV and this
+    computer must be on the same network.</p>
+
+  <h2>Help</h2>
+  <p class="muted" id="footer"></p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let status = {};
+
+async function api(name, body) {
+  const response = await fetch(`/api/${name}`, body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    : {});
+  const json = await response.json();
+  if (!response.ok || json.ok === false) throw new Error(json.error || `Error ${response.status}`);
+  return json;
+}
+
+async function refreshStatus() {
+  try {
+    status = await api('status');
+  } catch {
+    $('phase').textContent = 'Soft Subs isn’t running.';
+    return;
+  }
+  $('title').textContent = status.title || 'Nothing playing';
+  $('phase').textContent = status.phase;
+  $('phase').className = status.state === 'failed' ? 'failed' : 'muted';
+  $('controls').hidden = !['playing', 'ready'].includes(status.state);
+  $('subs').checked = status.subtitlesOn;
+  $('subs').disabled = !status.hasSubtitles;
+  $('offset').textContent = `${status.subtitleOffset >= 0 ? '+' : ''}${status.subtitleOffset.toFixed(2)} s`;
+  $('footer').textContent = `Serving on ${status.lanAddress ?? 'no network'}:47800 · ` +
+    (status.ffmpeg ? 'ffmpeg ready' : 'ffmpeg missing (MP4/DASH sources won’t work)') + ` · v${status.version}`;
+}
+
+function renderDevices(devices) {
+  const list = $('devices');
+  list.replaceChildren();
+  if (!devices.length) {
+    list.innerHTML = '<span class="muted">No TVs found. Make sure the TV is on and on the same network, then Refresh.</span>';
+    return;
+  }
+  for (const device of devices) {
+    const row = document.createElement('div');
+    row.className = 'device';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = device.name;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = device.kind === 'airplay' ? 'AirPlay' : 'Chromecast';
+    row.append(name, tag);
+
+    if (device.needsPairing) {
+      const pair = document.createElement('button');
+      pair.textContent = 'Pair';
+      const pin = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'PIN', hidden: true, maxLength: 4 });
+      const confirm = Object.assign(document.createElement('button'), { textContent: 'OK', hidden: true, className: 'primary' });
+      pair.onclick = async () => {
+        pair.disabled = true;
+        try {
+          await api('pair', { device: device.id });
+          pin.hidden = confirm.hidden = false;
+          pair.hidden = true;
+          pin.focus();
+        } catch (error) {
+          alert(error.message);
+          pair.disabled = false;
+        }
+      };
+      confirm.onclick = async () => {
+        try {
+          await api('pair', { device: device.id, pin: pin.value.trim() });
+          loadDevices(true);
+        } catch (error) {
+          alert(error.message);
+        }
+      };
+      row.append(pin, confirm, pair);
+    } else {
+      const send = document.createElement('button');
+      send.className = status.deviceId === device.id && status.onTV ? '' : 'primary';
+      send.textContent = status.deviceId === device.id && status.onTV ? 'Playing' : 'Play here';
+      send.disabled = !['playing', 'ready'].includes(status.state);
+      send.onclick = () => api('send', { device: device.id }).catch((error) => alert(error.message));
+      row.append(send);
+    }
+    list.append(row);
+  }
+}
+
+async function loadDevices(refresh) {
+  try {
+    renderDevices((await api(`devices${refresh ? '?refresh=1' : ''}`)).devices);
+  } catch (error) {
+    $('devices').textContent = error.message;
+  }
+}
+
+$('subs').onchange = () => api('subtitles', { on: $('subs').checked }).catch((error) => alert(error.message));
+document.querySelectorAll('[data-nudge]').forEach((button) => {
+  button.onclick = () => api('nudge', { delta: +button.dataset.nudge }).then(refreshStatus);
+});
+$('stop').onclick = () => api('stop', {}).then(refreshStatus);
+$('refresh').onclick = () => { $('devices').innerHTML = '<span class="muted">Looking for TVs…</span>'; loadDevices(true); };
+
+refreshStatus().then(() => loadDevices(false));
+setInterval(refreshStatus, 1000);
+</script>
+</body>
+</html>

@@ -121,3 +121,12 @@ button:disabled {
 #status {
   margin-top: 10px;
 }
+
+.links {
+  font-size: 12px;
+}
+
+.links a {
+  color: var(--accent);
+  text-decoration: none;
+}

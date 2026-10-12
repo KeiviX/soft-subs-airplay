@@ -1,0 +1,5 @@
+aiohttp>=3.9
+pyatv>=0.16
+pychromecast>=14
+pystray>=0.19
+Pillow>=10
