@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Soft Subs AirPlay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AirPlay web videos to your TV with their subtitles.",
   "icons": {
     "48": "icon-48.png",
