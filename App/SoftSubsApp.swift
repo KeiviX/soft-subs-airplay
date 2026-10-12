@@ -63,19 +63,21 @@ struct ContentView: View {
                             .toggleStyle(.switch)
                             .controlSize(.small)
                         Spacer()
-                        Text("Timing")
-                            .foregroundStyle(.secondary)
-                        Button("Earlier", systemImage: "minus") { cast.nudgeSubtitles(by: -0.25) }
-                            .labelStyle(.iconOnly)
-                            .help("Show subtitles 0.25 s earlier")
-                        Text(String(format: "%+.2f s", cast.subtitleOffset))
-                            .monospacedDigit()
-                            .frame(width: 64)
-                        Button("Later", systemImage: "plus") { cast.nudgeSubtitles(by: 0.25) }
-                            .labelStyle(.iconOnly)
-                            .help("Show subtitles 0.25 s later")
+                        Group {
+                            Text("Timing")
+                                .foregroundStyle(.secondary)
+                            Button("Earlier", systemImage: "minus") { cast.nudgeSubtitles(by: -0.25) }
+                                .labelStyle(.iconOnly)
+                                .help("Show subtitles 0.25 s earlier")
+                            Text(String(format: "%+.2f s", cast.subtitleOffset))
+                                .monospacedDigit()
+                                .frame(width: 64)
+                            Button("Later", systemImage: "plus") { cast.nudgeSubtitles(by: 0.25) }
+                                .labelStyle(.iconOnly)
+                                .help("Show subtitles 0.25 s later")
+                        }
+                        .disabled(!cast.subtitlesOn)
                     }
-                    .disabled(!cast.subtitlesOn)
                     if !cast.subtitleSummary.isEmpty {
                         Text(cast.subtitleSummary)
                             .font(.caption)
