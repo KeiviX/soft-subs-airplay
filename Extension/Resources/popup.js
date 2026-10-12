@@ -235,7 +235,7 @@ async function watchStatus() {
     try {
       const status = await helper('/api/status');
       $('status').textContent = status.playing && !status.onTV
-        ? 'Playing on your Mac. Pick your TV with the AirPlay button in the Soft Subs window.'
+        ? 'Playing on your Mac. Click the AirPlay button in the Soft Subs video controls.'
         : status.phase;
     } catch {
       $('status').textContent = 'Lost contact with the Soft Subs app.';

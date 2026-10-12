@@ -9,6 +9,7 @@ struct HTTPRequest {
     var body: Data
     /// True when the request came from this Mac rather than from the TV or another device.
     var isLoopback: Bool
+    var remoteAddress: String
 
     func header(_ name: String) -> String? { headers[name.lowercased()] }
 }
@@ -117,8 +118,14 @@ final class HTTPServer: @unchecked Sendable {
             query: query,
             headers: headers,
             body: body,
-            isLoopback: isLoopback(connection)
+            isLoopback: isLoopback(connection),
+            remoteAddress: remoteAddress(connection)
         ))
+    }
+
+    private static func remoteAddress(_ connection: NWConnection) -> String {
+        guard case .hostPort(let host, _) = connection.endpoint else { return "?" }
+        return "\(host)".replacingOccurrences(of: "::ffff:", with: "")
     }
 
     private static func isLoopback(_ connection: NWConnection) -> Bool {

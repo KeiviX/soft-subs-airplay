@@ -45,6 +45,7 @@ final class CastController: ObservableObject {
     }
 
     let player = AVPlayer()
+    let tvDisplay = TVDisplay()
     let ffmpegAvailable = FFmpeg.tool("ffmpeg") != nil && FFmpeg.tool("ffprobe") != nil
 
     private let store = SessionStore()
@@ -56,15 +57,30 @@ final class CastController: ObservableObject {
     private var reloadTask: Task<Void, Never>?
     private var remuxProcess: Process?
     private var remuxFolder: URL?
-    private var observation: NSKeyValueObservation?
+    private var observations: [NSKeyValueObservation] = []
 
     init() {
         // Our selection must win over the user's system-wide caption preferences.
         player.appliesMediaSelectionCriteriaAutomatically = false
         player.allowsExternalPlayback = true
-        observation = player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] player, _ in
+        observations.append(player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] player, _ in
             let active = player.isExternalPlaybackActive
+            DebugLog.log("player externalPlaybackActive=\(active)")
             Task { @MainActor in self?.isOnTV = active }
+        })
+        observations.append(player.observe(\.timeControlStatus, options: [.new]) { player, _ in
+            DebugLog.log("player timeControlStatus=\(player.timeControlStatus.rawValue) waiting=\(player.reasonForWaitingToPlay?.rawValue ?? "-") rate=\(player.rate)")
+        })
+        let center = NotificationCenter.default
+        center.addObserver(forName: AVPlayerItem.newErrorLogEntryNotification, object: nil, queue: nil) { note in
+            guard let event = (note.object as? AVPlayerItem)?.errorLog()?.events.last else { return }
+            DebugLog.log("AVPlayer error log \(event.errorStatusCode) \(event.errorDomain): \(event.errorComment ?? "") \(event.uri ?? "")")
+        }
+        center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: nil) { note in
+            DebugLog.log("AVPlayer failed to play to end: \(String(describing: note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey]))")
+        }
+        center.addObserver(forName: AVPlayerItem.playbackStalledNotification, object: nil, queue: nil) { _ in
+            DebugLog.log("AVPlayer playback stalled")
         }
         startServer()
     }
@@ -73,7 +89,7 @@ final class CastController: ObservableObject {
         switch phase {
         case .idle: "Open a video in Safari and click the Soft Subs button."
         case .preparing(let message): message
-        case .playing: isOnTV ? "Playing on your TV." : "Playing on this Mac. Pick your TV with the AirPlay button."
+        case .playing: isOnTV ? "Playing on your TV." : "Playing on this Mac. Click the AirPlay button in the video controls to send it to your TV."
         case .failed(let message): message
         }
     }
@@ -159,7 +175,16 @@ final class CastController: ObservableObject {
         return id
     }
 
+    // MARK: TV output
+
+    /// Plays full-screen on the TV display (Screen Mirroring → Use as Separate Display).
+    func showOnTVDisplay() {
+        tvDisplay.show(player)
+        player.play()
+    }
+
     func stop() {
+        tvDisplay.hide()
         castTask?.cancel()
         reloadTask?.cancel()
         remuxProcess?.terminate()

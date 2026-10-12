@@ -98,7 +98,7 @@ final class StreamService: @unchecked Sendable {
             return .error(404, "Unknown session")
         }
         let rest = parts[2...].joined(separator: "/")
-        DebugLog.log("\(request.isLoopback ? "local" : "lan  ") \(request.method) \(rest.prefix(60))")
+        DebugLog.log("from \(request.remoteAddress) \(request.method) \(rest.prefix(60)) range=\(request.header("range") ?? "-") ua=\(request.header("user-agent")?.prefix(40) ?? "-")")
 
         switch rest {
         case "master.m3u8":

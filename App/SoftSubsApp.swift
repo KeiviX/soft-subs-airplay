@@ -41,9 +41,6 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
-                    RoutePicker(player: cast.player)
-                        .frame(width: 30, height: 30)
-                        .help("Choose a TV")
                     VStack(alignment: .leading, spacing: 2) {
                         Text(cast.title.isEmpty ? "Soft Subs" : cast.title)
                             .font(.headline)
@@ -60,6 +57,7 @@ struct ContentView: View {
                 }
 
                 if cast.phase == .playing {
+                    TVButtons(cast: cast, display: cast.tvDisplay)
                     HStack(spacing: 8) {
                         Toggle("Subtitles", isOn: $cast.subtitlesOn)
                             .toggleStyle(.switch)
@@ -108,15 +106,29 @@ struct ContentView: View {
     }
 }
 
-struct RoutePicker: NSViewRepresentable {
-    let player: AVPlayer
+/// Fallback for TVs that only accept screen mirroring: show the video full-screen on the TV display.
+struct TVButtons: View {
+    let cast: CastController
+    @ObservedObject var display: TVDisplay
 
-    func makeNSView(context: Context) -> AVRoutePickerView {
-        let view = AVRoutePickerView()
-        view.player = player
-        view.isRoutePickerButtonBordered = false
-        return view
+    var body: some View {
+        HStack(spacing: 8) {
+            if display.isShowing {
+                Button("Close TV display", systemImage: "xmark.rectangle", action: display.hide)
+            } else {
+                Button(display.externalScreenName.map { "Show on \($0)" } ?? "Full screen",
+                       systemImage: "tv", action: cast.showOnTVDisplay)
+            }
+            Text(hint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
-    func updateNSView(_ view: AVRoutePickerView, context: Context) {}
+    private var hint: String {
+        if display.isShowing { return "Press Esc on it to close." }
+        if display.externalScreenName != nil { return "Fallback if AirPlay doesn't show the video." }
+        return "Fallback: mirror your screen to the TV (Control Center → Screen Mirroring), then use this."
+    }
 }
