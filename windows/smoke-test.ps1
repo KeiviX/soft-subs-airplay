@@ -2,6 +2,13 @@
 # the rebuilt playlists. Used by CI; also handy on a Windows PC: powershell -File windows\smoke-test.ps1
 $ErrorActionPreference = "Stop"
 $exe = Join-Path $PSScriptRoot "build\dist\SoftSubs\SoftSubs.exe"
+
+# Invoke-WebRequest returns non-text content types (like HLS playlists) as bytes.
+function Get-Text([string]$url) {
+    $content = (Invoke-WebRequest $url -UseBasicParsing).Content
+    if ($content -is [byte[]]) { return [Text.Encoding]::UTF8.GetString($content) }
+    return $content
+}
 $app = Start-Process $exe -ArgumentList "--no-tray" -PassThru
 try {
     $api = "http://127.0.0.1:47800/api"
@@ -27,9 +34,10 @@ try {
     if ($status.state -ne "ready") { throw "cast didn't get ready" }
 
     $base = "http://127.0.0.1:47800/s/$session"
-    $master = (Invoke-WebRequest "$base/master.m3u8?subs=1" -UseBasicParsing).Content
+    $master = Get-Text "$base/master.m3u8?subs=1"
     if ($master -notmatch 'GROUP-ID="softsubs"') { throw "subtitle rendition missing:`n$master" }
-    $vtt = (Invoke-WebRequest "$base/subs/0.vtt" -UseBasicParsing).Content
+    $vtt = Get-Text "$base/subs/0.vtt"
+    Write-Host $master.Substring(0, [Math]::Min(400, $master.Length))
     Write-Host $vtt
     if ($vtt -notmatch "MPEGTS:900000") { throw "ffprobe timing missing" }
     Write-Host "Smoke test passed"

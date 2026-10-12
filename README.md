@@ -1,12 +1,16 @@
 # Soft Subs AirPlay
 
-AirPlay web videos from Safari to your TV, **with their subtitles**.
+Cast web videos to your TV, **with their subtitles**: from Safari on a Mac via AirPlay, or from Chrome on Windows to AirPlay and Chromecast TVs.
 
 Normal AirPlay drops the subtitles on most sites. Soft Subs rebuilds the video stream with the subtitles inside it, so your TV shows them as real, toggleable subtitles.
+
+**Jump to:** [Mac (Safari)](#quick-setup) · [Windows (Chrome)](#windows-chrome)
 
 ![The Soft Subs window playing a video with subtitles](docs/app-window.png)
 
 ## Quick setup
+
+macOS with Safari. For Windows, see [Windows (Chrome)](#windows-chrome).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KeiviX/soft-subs-airplay/main/install.sh | bash
@@ -31,14 +35,40 @@ Installer options: `… | bash -s -- --source` builds from source; `--no-ffmpeg`
 
 </details>
 
+## Windows (Chrome)
+
+On Windows, the Soft Subs helper sends the video to the TV itself: **AirPlay** TVs (Apple TV, Samsung, LG, Sony…) and **Chromecast** TVs (Google TV / Android TV sets, Chromecast dongles).
+
+### Install
+
+1. Download **SoftSubs-Setup-x.y.z.exe** from [Releases](../../releases) and run it. Windows may show *"Windows protected your PC"* because the app isn't code-signed. Click **More info → Run anyway**.
+   The installer bundles ffmpeg, allows the app through the firewall (the TV streams from your PC), and starts Soft Subs when you sign in. Look for its icon by the clock.
+2. Add the Chrome extension (Developer mode):
+   1. Open `chrome://extensions` and turn on **Developer mode** (top right).
+   2. Click **Load unpacked** and choose `C:\Program Files\Soft Subs\chrome-extension`. The Start menu has a *Soft Subs Chrome extension folder* shortcut.
+   3. Pin **Soft Subs** from the puzzle-piece menu so its button is always visible.
+
+   Chrome may show a *"Disable developer mode extensions"* warning when it starts. Click away from it, not **Disable**. Edge works the same way at `edge://extensions`.
+3. Make sure the PC and the TV are on the same network, and that Windows calls that network **Private** (Settings → Network & internet → your network). On a Public network, the firewall keeps the TV out.
+
+### Use
+
+1. Play the video with its subtitles on, then click the **Soft Subs** button in Chrome.
+2. Choose the stream, the subtitles and your **TV**, then click **Send to <TV>**.
+3. **AirPlay TVs ask for a PIN the first time.** Click *Pair & manage TVs* in the popup (or the tray icon → Open Soft Subs), click **Pair**, then type the PIN the TV shows.
+4. The control panel (tray icon → *Open Soft Subs*) has subtitles on/off, timing −/+ and Stop.
+
+> **Status:** the Windows version is new. AirPlay from Windows uses the open-source [pyatv](https://pyatv.dev) library, and non-Apple TVs differ in what they accept. If one TV refuses AirPlay but also has Chromecast, pick its Chromecast entry. The log is in `%LOCALAPPDATA%\SoftSubs\soft-subs.log`.
+
 ## Requirements
 
 | | |
 |---|---|
 | macOS | 15 Sequoia or later, Apple silicon or Intel |
-| Browser | Safari (Chrome support is planned) |
-| TV | An AirPlay receiver: Apple TV, or an AirPlay 2 TV (Samsung, LG, Sony, Vizio…) on the same network as the Mac |
-| ffmpeg | Optional but recommended (`brew install ffmpeg`). Needed for MP4/DASH sources and for exact subtitle timing on HLS |
+| Windows | Windows 10 or 11 (x64; ARM64 runs it through emulation), Chrome or Edge 111+ |
+| Browser | Safari on Mac; Chrome or Edge on Windows |
+| TV | Mac: an AirPlay receiver (Apple TV, or an AirPlay 2 TV from Samsung, LG, Sony, Vizio…). Windows: AirPlay or Chromecast. Same network as the computer |
+| ffmpeg | Mac: optional but recommended (`brew install ffmpeg`), needed for MP4/DASH sources and exact subtitle timing. Windows: bundled |
 | Building from source | Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) |
 
 ## Using it
@@ -91,13 +121,18 @@ scripts/smoke-test.sh         # cast Apple's sample stream with test cues and pr
 
 `build.sh` signs with your Apple Development certificate if you have one, otherwise ad-hoc.
 
+The Windows helper also runs on a Mac for development (`pip install -r windows/requirements.txt`, then `cd windows && python -m softsubs --no-tray --port 47801`). Tests: `python -m pytest windows/tests`. To build the installer on Windows: `powershell -ExecutionPolicy Bypass -File windows\build.ps1 -Version 0.1.0`.
+
 | Path | What |
 |---|---|
 | `App/` | Helper app: `HTTPServer`, `StreamService` (proxy + routes), `Playlist` (HLS rewriting), `WebVTT`, `Media` (ffmpeg/ffprobe, LAN address), `CastController` (AVPlayer + API), `TVOutput` (full-screen fallback) |
 | `Extension/Resources/` | Safari Web Extension (MV3): `page-hook.js` (fetch/XHR capture in the page world), `content.js`, `subtitles.js` (parsers), popup |
 | `project.yml` | XcodeGen spec |
 | `install.sh` | One-line installer |
-| `scripts/release.sh` | Builds, zips and publishes a GitHub release |
+| `scripts/release.sh` | Builds, zips and publishes a GitHub release (the Windows workflow then attaches its installer) |
+| `windows/` | Windows helper (Python): `softsubs/server.py` (API + proxy), `hls.py`, `media.py`, `receivers.py` (AirPlay via pyatv, Chromecast), `panel.html`; `build.ps1` + `installer.iss` build the installer |
+| `scripts/build_chrome.py` | Packages the extension for Chrome |
+| `.github/workflows/windows.yml` | Builds, tests and smoke-tests the Windows installer; attaches it to releases |
 
 ### Releasing
 
@@ -111,6 +146,5 @@ With a **Developer ID Application** certificate in your keychain (paid Apple Dev
 ## Roadmap
 
 - Built into the Keivi browser (WKWebView), with no extension sandbox
-- Chrome support (the extension already talks to the app over localhost)
 - Record subtitles that are drawn as HTML over the video
 - Burn-in fallback for TVs that ignore soft subtitles
