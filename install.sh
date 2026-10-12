@@ -68,15 +68,18 @@ if [[ $WITH_FFMPEG == 1 ]] && ! command -v ffmpeg >/dev/null; then
 fi
 
 step "Installing to Applications"
-DEST=/Applications
-[[ -w $DEST ]] || DEST="$HOME/Applications"
+# SOFTSUBS_INSTALL_DIR installs somewhere else without registering or launching the app (for testing).
+DEST=${SOFTSUBS_INSTALL_DIR:-/Applications}
+[[ -w $DEST || -n ${SOFTSUBS_INSTALL_DIR:-} ]] || DEST="$HOME/Applications"
 mkdir -p "$DEST"
-osascript -e 'quit app "Soft Subs"' >/dev/null 2>&1 || true
 rm -rf "${DEST:?}/$APP_NAME"
 ditto "$BUILT" "$DEST/$APP_NAME"
 xattr -dr com.apple.quarantine "$DEST/$APP_NAME" 2>/dev/null || true
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST/$APP_NAME"
-open "$DEST/$APP_NAME"
+if [[ -z ${SOFTSUBS_INSTALL_DIR:-} ]]; then
+    osascript -e 'quit app "Soft Subs"' >/dev/null 2>&1 || true
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST/$APP_NAME"
+    open "$DEST/$APP_NAME"
+fi
 
 step "Done: $DEST/$APP_NAME"
 cat <<'NEXT'
