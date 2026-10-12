@@ -7,12 +7,14 @@ struct SoftSubsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var cast = CastController()
     @StateObject private var safariExtension = SafariExtensionStatus()
+    @StateObject private var updater = Updater()
 
     var body: some Scene {
         Window("Soft Subs", id: "main") {
             ContentView()
                 .environmentObject(cast)
                 .environmentObject(safariExtension)
+                .environmentObject(updater)
                 .onOpenURL { _ in NSApp.activate() }
         }
         .windowResizability(.contentMinSize)
@@ -27,9 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct ContentView: View {
     @EnvironmentObject private var cast: CastController
     @EnvironmentObject private var safariExtension: SafariExtensionStatus
+    @EnvironmentObject private var updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
+            if updater.isUpdateAvailable {
+                UpdateBanner(updater: updater)
+            }
             if !safariExtension.isEnabled {
                 ExtensionBanner(status: safariExtension)
             }
@@ -163,5 +169,35 @@ struct ExtensionBanner: View {
         }
         .padding(12)
         .background(.orange.opacity(0.12))
+    }
+}
+
+struct UpdateBanner: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Soft Subs \(updater.latestVersion ?? "") is available")
+                    .font(.headline)
+                Text(updater.error ?? (updater.canInstall
+                    ? "Updates the app and its Safari extension, then reopens."
+                    : "Move Soft Subs to Applications to update it from here, or download it from GitHub."))
+                    .font(.caption)
+                    .foregroundStyle(updater.error == nil ? Color.secondary : Color.red)
+            }
+            Spacer()
+            if updater.canInstall {
+                Button(updater.isInstalling ? "Updating…" : "Update now", action: updater.install)
+                    .disabled(updater.isInstalling)
+            } else {
+                Link("Download", destination: URL(string: "https://github.com/KeiviX/soft-subs-airplay/releases/latest")!)
+            }
+        }
+        .padding(12)
+        .background(.blue.opacity(0.12))
     }
 }

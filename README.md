@@ -55,10 +55,19 @@ On Windows, the Soft Subs helper sends the video to the TV itself: **AirPlay** T
 
 1. Play the video with its subtitles on, then click the **Soft Subs** button in Chrome.
 2. Choose the stream, the subtitles and your **TV**, then click **Send to <TV>**.
-3. **AirPlay TVs ask for a PIN the first time.** Click *Pair & manage TVs* in the popup (or the tray icon → Open Soft Subs), click **Pair**, then type the PIN the TV shows.
+3. AirPlay TVs come first in the list. **They ask for a PIN the first time.** Click *Pair & manage TVs* in the popup (or the tray icon → Open Soft Subs), click **Pair**, then type the PIN the TV shows.
 4. The control panel (tray icon → *Open Soft Subs*) has subtitles on/off, timing −/+ and Stop.
+5. TV not showing up? The panel explains common causes (Public network, VM on NAT). You can also add the TV by its **IP address**, found under the TV's network settings.
 
 > **Status:** the Windows version is new. AirPlay from Windows uses the open-source [pyatv](https://pyatv.dev) library, and non-Apple TVs differ in what they accept. If one TV refuses AirPlay but also has Chromecast, pick its Chromecast entry. The log is in `%LOCALAPPDATA%\SoftSubs\soft-subs.log`.
+
+## Updating
+
+From 0.1.1 on, Soft Subs checks GitHub for new releases:
+- **Mac:** a banner in the Soft Subs window. **Update now** downloads the new version, swaps it in and reopens. The Safari extension updates with it. (The Mac app has to be in Applications. Running `install.sh` again also updates it.)
+- **Windows:** **Update now** in the control panel. The extension popup also says when an update is available. It runs the new installer silently (one Windows admin prompt), and the Chrome extension reloads itself afterwards.
+
+Coming from 0.1.0? Install 0.1.1 manually once; it has the updater.
 
 ## Requirements
 

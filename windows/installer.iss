@@ -32,18 +32,20 @@ Source: "..\dist\chrome\soft-subs-chrome\*"; DestDir: "{app}\chrome-extension"; 
 [Icons]
 Name: "{autoprograms}\Soft Subs"; Filename: "{app}\SoftSubs.exe"
 Name: "{autoprograms}\Soft Subs Chrome extension folder"; Filename: "{app}\chrome-extension"
-Name: "{autostartup}\Soft Subs"; Filename: "{app}\SoftSubs.exe"; Tasks: startup
+Name: "{autostartup}\Soft Subs"; Filename: "{app}\SoftSubs.exe"; Parameters: "--background"; Tasks: startup
 
 [Registry]
 ; softsubs:// lets the Chrome extension start the app when it isn't running.
 Root: HKCR; Subkey: "softsubs"; ValueType: string; ValueData: "URL:Soft Subs"; Flags: uninsdeletekey
 Root: HKCR; Subkey: "softsubs"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
-Root: HKCR; Subkey: "softsubs\shell\open\command"; ValueType: string; ValueData: """{app}\SoftSubs.exe"" ""%1"""
+Root: HKCR; Subkey: "softsubs\shell\open\command"; ValueType: string; ValueData: """{app}\SoftSubs.exe"" --background ""%1"""
 
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Soft Subs"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Soft Subs"" dir=in action=allow program=""{app}\SoftSubs.exe"" enable=yes profile=private,domain"; Flags: runhidden
 Filename: "{app}\SoftSubs.exe"; Description: "Open Soft Subs"; Flags: nowait postinstall skipifsilent
+; After a silent in-app update, start the new version again.
+Filename: "{app}\SoftSubs.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
 Filename: "{app}\chrome-extension"; Description: "Show the Chrome extension folder (for Load unpacked)"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallRun]

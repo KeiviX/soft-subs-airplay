@@ -26,12 +26,19 @@
     button:disabled { opacity: .5; cursor: default; }
     input[type=text] { font: inherit; width: 70px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border);
                        background: transparent; color: inherit; letter-spacing: .2em; }
+    .warn { margin-top: 10px; border-color: #c77700; }
+    .warn ul { margin: 6px 0 0; padding-left: 18px; }
     .offset { font-variant-numeric: tabular-nums; min-width: 64px; text-align: center; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
 <main>
+  <div id="update" class="card warn row" style="margin-bottom: 18px" hidden>
+    <span style="flex: 1"><strong>Soft Subs <span id="update-version"></span> is available.</strong>
+      <span class="muted">Updates the app and the Chrome extension.</span></span>
+    <button id="update-now" class="primary">Update now</button>
+  </div>
   <h1>Soft Subs</h1>
   <div class="muted">Cast web videos to your TV with their subtitles.</div>
 
@@ -52,8 +59,14 @@
 
   <h2 class="row">TVs <button id="refresh" style="font-size: 12px; padding: 2px 8px">Refresh</button></h2>
   <div id="devices" class="card"><span class="muted">Looking for TVs…</span></div>
+  <div id="diagnosis" class="card warn" hidden></div>
+  <form id="add" class="row" style="margin-top: 10px">
+    <span class="muted">TV not listed? Add it by IP address:</span>
+    <input id="address" type="text" placeholder="192.168.1.50" style="width: 130px; letter-spacing: 0">
+    <button>Add</button>
+  </form>
   <p class="muted">AirPlay TVs show a PIN the first time; Chromecast TVs need no pairing. The TV and this
-    computer must be on the same network.</p>
+    computer must be on the same network. A TV's IP address is usually under Settings → Network on the TV.</p>
 
   <h2>Help</h2>
   <p class="muted" id="footer"></p>
@@ -85,15 +98,43 @@ async function refreshStatus() {
   $('subs').checked = status.subtitlesOn;
   $('subs').disabled = !status.hasSubtitles;
   $('offset').textContent = `${status.subtitleOffset >= 0 ? '+' : ''}${status.subtitleOffset.toFixed(2)} s`;
+  const update = status.update || {};
+  $('update').hidden = !update.available;
+  $('update-version').textContent = update.latest || '';
+  $('update-now').disabled = update.installing;
+  $('update-now').textContent = update.installing ? 'Updating…' : 'Update now';
   $('footer').textContent = `Serving on ${status.lanAddress ?? 'no network'}:47800 · ` +
     (status.ffmpeg ? 'ffmpeg ready' : 'ffmpeg missing (MP4/DASH sources won’t work)') + ` · v${status.version}`;
+}
+
+// Explains the usual reasons no TVs show up: a Public network profile, a virtual machine on NAT, no network.
+function diagnose() {
+  const reasons = [];
+  const address = status.lanAddress;
+  if (!address) reasons.push('This computer isn\u2019t connected to a local network.');
+  if (address && /^10\.0\.2\.|^192\.168\.(64|65|122)\.|^172\.(1[6-9]|2\d|3[01])\./.test(address)) {
+    reasons.push(`This PC\u2019s address (${address}) looks like a virtual machine on NAT/shared networking. ` +
+      'Switch the VM to bridged networking so it sits on the same network as the TV.');
+  }
+  if (status.networkCategory === 'Public') {
+    reasons.push('Windows treats this network as Public, which blocks finding TVs and the TV\u2019s connection. ' +
+      'Change it to Private: Settings \u2192 Network & internet \u2192 your network \u2192 Private network.');
+  }
+  reasons.push('Make sure the TV is on, and on the same Wi-Fi/network as this PC (not a guest network).');
+  reasons.push('Still nothing? Add the TV by its IP address below.');
+  const box = $('diagnosis');
+  box.innerHTML = '<strong>No TVs found.</strong> Things to check:<ul></ul>';
+  for (const reason of reasons) box.querySelector('ul').append(Object.assign(document.createElement('li'), { textContent: reason }));
+  box.hidden = false;
 }
 
 function renderDevices(devices) {
   const list = $('devices');
   list.replaceChildren();
+  $('diagnosis').hidden = true;
   if (!devices.length) {
-    list.innerHTML = '<span class="muted">No TVs found. Make sure the TV is on and on the same network, then Refresh.</span>';
+    list.innerHTML = '<span class="muted">No TVs found.</span>';
+    diagnose();
     return;
   }
   for (const device of devices) {
@@ -147,11 +188,42 @@ function renderDevices(devices) {
 
 async function loadDevices(refresh) {
   try {
-    renderDevices((await api(`devices${refresh ? '?refresh=1' : ''}`)).devices);
+    let result = await api(`devices${refresh ? '?refresh=1' : ''}`);
+    for (let attempt = 0; result.scanning && attempt < 20; attempt++) {
+      if (result.devices.length) renderDevices(result.devices);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      result = await api('devices');
+    }
+    renderDevices(result.devices);
   } catch (error) {
     $('devices').textContent = error.message;
   }
 }
+
+$('add').onsubmit = async (event) => {
+  event.preventDefault();
+  const address = $('address').value.trim();
+  if (!address) return;
+  $('devices').innerHTML = `<span class="muted">Looking for a TV at ${address}…</span>`;
+  try {
+    renderDevices((await api('devices', { address })).devices);
+    $('address').value = '';
+  } catch (error) {
+    alert(error.message);
+    loadDevices(false);
+  }
+};
+
+$('update-now').onclick = async () => {
+  $('update-now').disabled = true;
+  $('update-now').textContent = 'Downloading…';
+  try {
+    await api('update', {});
+  } catch (error) {
+    // The app exits to let the installer run, which can cut this request off; that's expected.
+    if (!/fetch/i.test(error.message)) alert(error.message);
+  }
+};
 
 $('subs').onchange = () => api('subtitles', { on: $('subs').checked }).catch((error) => alert(error.message));
 document.querySelectorAll('[data-nudge]').forEach((button) => {

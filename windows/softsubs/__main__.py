@@ -1,6 +1,7 @@
 """Starts the Soft Subs server, with a tray icon on Windows.
 
-    SoftSubs.exe                 run with a tray icon
+    SoftSubs.exe                 run with a tray icon and open the window
+    SoftSubs.exe --background    run with a tray icon only (used at sign-in)
     SoftSubs.exe --no-tray       run headless (tests, other platforms)
     SoftSubs.exe softsubs://...  launched from the extension's "Start Soft Subs" link
 """
@@ -46,17 +47,31 @@ def serve(port: int, ready: threading.Event | None = None) -> None:
     asyncio.run(main())
 
 
+def open_panel(port: int) -> None:
+    """Opens the control panel as its own window (Edge app mode) on Windows, else in the default browser."""
+    url = f"http://127.0.0.1:{port}/"
+    if sys.platform == "win32":
+        import os
+        import subprocess
+
+        for root in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
+            edge = os.path.join(root or "", "Microsoft", "Edge", "Application", "msedge.exe")
+            if os.path.isfile(edge):
+                subprocess.Popen([edge, f"--app={url}", "--window-size=620,820"])
+                return
+    webbrowser.open(url)
+
+
 def run_tray(port: int) -> None:
     import pystray
     from PIL import Image
 
     from .icon import draw_icon
 
-    panel = f"http://127.0.0.1:{port}/"
     icon = pystray.Icon(
         "SoftSubs", draw_icon(64), "Soft Subs",
         menu=pystray.Menu(
-            pystray.MenuItem("Open Soft Subs", lambda: webbrowser.open(panel), default=True),
+            pystray.MenuItem("Open Soft Subs", lambda: open_panel(port), default=True),
             pystray.MenuItem("Open log folder", lambda: webbrowser.open(DATA_DIR.as_uri())),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", lambda item: icon.stop()),
@@ -68,13 +83,14 @@ def run_tray(port: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="SoftSubs")
     parser.add_argument("--no-tray", action="store_true")
+    parser.add_argument("--background", action="store_true", help="start in the tray without opening the window")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("url", nargs="?")
     args = parser.parse_args()
 
     if already_running(args.port):
         if not args.url:
-            webbrowser.open(f"http://127.0.0.1:{args.port}/")
+            open_panel(args.port)
         return
 
     if args.no_tray:
@@ -83,6 +99,8 @@ def main() -> None:
     ready = threading.Event()
     threading.Thread(target=serve, args=(args.port, ready), daemon=True).start()
     ready.wait(10)
+    if not args.url and not args.background:
+        open_panel(args.port)  # Launched from the Start menu: show the window. At sign-in it stays in the tray.
     run_tray(args.port)
 
 

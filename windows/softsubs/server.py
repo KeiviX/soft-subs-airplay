@@ -20,6 +20,7 @@ from aiohttp import web
 from . import __version__, hls, media
 from .log import log, problem, save_last_cast, take_problem
 from .receivers import Playback, Receivers
+from .updater import Updater
 
 PORT = 47800
 TRUSTED_ORIGINS = ("chrome-extension://", "safari-web-extension://", "moz-extension://", "extension://")
@@ -57,6 +58,7 @@ class Controller:
         self.port = port
         self.upstream = media.Upstream()
         self.receivers = Receivers()
+        self.updater = Updater()
         self.sessions: dict[str, Session] = {}
         self.session_id: str | None = None
         self.phase = "idle"
@@ -82,6 +84,8 @@ class Controller:
             "deviceId": self.device_id, "subtitlesOn": self.subtitles_on,
             "subtitleOffset": session.offset if session else 0, "hasSubtitles": bool(session and session.cues),
             "ffmpeg": media.tool("ffmpeg") is not None, "lanAddress": media.lan_address(),
+            "networkCategory": media.network_category(), "tvAddresses": self.receivers.manual_hosts,
+            "update": self.updater.info(),
         }
 
     def _set(self, phase: str, message: str) -> None:
@@ -222,7 +226,7 @@ def _describe(error: BaseException | None) -> str:
     if error is None:
         return ""
     text = str(error) or error.__class__.__name__
-    return text if text.endswith(".") or text.endswith(")") else text + "."
+    return text if text.endswith((".", "?", "!", ")")) else text + "."
 
 
 # HTTP
@@ -269,10 +273,17 @@ def create_app(controller: Controller) -> web.Application:
         try:
             if name == "status":
                 return _json(controller.status())
-            if name == "devices":
-                devices = (await controller.receivers.scan() if request.query.get("refresh") or
-                           not controller.receivers.devices else controller.receivers.devices.values())
+            if name == "devices" and request.method == "POST":
+                devices = await controller.receivers.add_host(str(data.get("address", "")))
                 return _json({"ok": True, "devices": [d.public() for d in devices]})
+            if name == "devices":
+                # Answer straight away with what's known; searching takes seconds, so it runs in the background
+                # and callers poll while "scanning" is true.
+                receivers = controller.receivers
+                if request.query.get("refresh") or not receivers.devices:
+                    receivers.scan_in_background()
+                return _json({"ok": True, "scanning": receivers.scanning,
+                              "devices": [d.public() for d in receivers.devices.values()]})
             if name == "cast":
                 save_last_cast(body)
                 log(f"cast {data.get('url')} subtitles={len((data.get('subtitles') or {}).get('cues', []))} "
@@ -290,6 +301,11 @@ def create_app(controller: Controller) -> web.Application:
             if name == "stop":
                 await controller.stop()
                 return _json({"ok": True})
+            if name == "update":
+                if request.method == "POST":
+                    await controller.updater.install()
+                    return _json({"ok": True})
+                return _json({"ok": True, **await controller.updater.check(force=bool(request.query.get("force")))})
             if name == "pair":
                 if data.get("pin"):
                     paired = await controller.receivers.finish_pairing(data["device"], str(data["pin"]))
@@ -399,7 +415,8 @@ def create_app(controller: Controller) -> web.Application:
 
     async def startup(_: web.Application) -> None:
         # Find TVs in the background so the popup's first look at the list is instant.
-        asyncio.get_running_loop().create_task(controller.receivers.scan())
+        controller.receivers.scan_in_background()
+        asyncio.get_running_loop().create_task(controller.updater.check())
 
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)

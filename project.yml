@@ -27,6 +27,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Soft Subs
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.entertainment
         NSLocalNetworkUsageDescription: Soft Subs serves the video and its subtitles to your TV over your local network.
         NSAppTransportSecurity:
@@ -55,6 +57,8 @@ targets:
       path: Extension/Info.plist
       properties:
         CFBundleDisplayName: Soft Subs AirPlay
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler

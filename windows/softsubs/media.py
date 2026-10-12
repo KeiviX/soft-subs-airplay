@@ -222,3 +222,28 @@ def lan_address() -> str | None:
         except OSError:
             return None
     return None if address.startswith("127.") else address
+
+
+_network_category: tuple[float, str | None] = (0.0, None)
+
+
+def network_category() -> str | None:
+    """Windows' network profile ("Public", "Private", "DomainAuthenticated"). On Public networks the firewall
+    blocks discovery and the TV's requests. Cached for a minute; None elsewhere or if unknown."""
+    global _network_category
+    import time
+
+    if sys.platform != "win32":
+        return None
+    checked, category = _network_category
+    if time.monotonic() - checked > 60:
+        try:
+            output = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "(Get-NetConnectionProfile | Select-Object -First 1).NetworkCategory"],
+                capture_output=True, text=True, timeout=10, creationflags=_NO_WINDOW,
+            ).stdout.strip()
+            category = output or None
+        except (OSError, subprocess.SubprocessError):
+            category = None
+        _network_category = (time.monotonic(), category)
+    return category

@@ -198,13 +198,28 @@ async function buildHeaders(url) {
   return headers;
 }
 
+// Asks the Windows helper for TVs. Searching the network takes a few seconds, so this shows what's known
+// straight away and keeps polling while the helper is still searching.
 async function loadDevices(refresh = false) {
-  const select = $('device');
+  $('tv').hidden = false;
+  let result;
   try {
-    devices = (await helper(`/api/devices${refresh ? '?refresh=1' : ''}`)).devices;
-  } catch (error) {
-    devices = [];
+    result = await helper(`/api/devices${refresh ? '?refresh=1' : ''}`);
+    renderDevices(result);
+    for (let attempt = 0; result.scanning && attempt < 20; attempt++) {
+      await sleep(1000);
+      result = await helper('/api/devices');
+      renderDevices(result);
+    }
+  } catch {
+    renderDevices({ devices: [], scanning: false });
   }
+}
+
+function renderDevices(result) {
+  devices = [...result.devices].sort((a, b) => (a.kind === 'airplay' ? 0 : 1) - (b.kind === 'airplay' ? 0 : 1));
+  const select = $('device');
+  const previous = select.value;
   const saved = localStorage.getItem('softsubs:device');
   select.replaceChildren();
   for (const device of devices) {
@@ -212,11 +227,14 @@ async function loadDevices(refresh = false) {
     option.value = device.id;
     option.textContent = `${device.name} · ${device.kind === 'airplay' ? 'AirPlay' : 'Chromecast'}`
       + (device.needsPairing ? ' (pair first)' : '');
-    option.selected = device.id === saved;
     select.append(option);
   }
-  $('tv').hidden = false;
-  $('no-tvs').hidden = devices.length > 0;
+  // Keep the current or last-used TV; otherwise prefer AirPlay (Chromecast is the fallback).
+  const pick = [previous, saved].find((id) => devices.some((d) => d.id === id))
+    ?? devices.find((d) => d.kind === 'airplay')?.id ?? devices[0]?.id;
+  if (pick) select.value = pick;
+  $('no-tvs').hidden = devices.length > 0 || result.scanning;
+  $('searching').hidden = !result.scanning;
   updateSendLabel();
 }
 
@@ -226,7 +244,9 @@ function selectedDevice() {
 
 function updateSendLabel() {
   const device = selectedDevice();
-  $('send').textContent = devices ? (device ? `Send to ${device.name}` : 'No TV selected') : 'Send to TV';
+  $('send').textContent = !devices ? 'Send to TV'
+    : !device ? 'Choose a TV'
+    : device.needsPairing ? `Pair with ${device.name}…` : `Send to ${device.name}`;
   if (devices) $('send').disabled = !device || !$('stream').value;
 }
 
@@ -300,27 +320,39 @@ async function main() {
   $('send').onclick = send;
 
   const [status, frames] = await Promise.all([ensureHelper(), scanFrames()]);
-  if (status) {
+  // Chrome on Windows: the installer updates the extension's files on disk; reload once to pick them up.
+  const mine = api.runtime.getManifest().version;
+  if (!isSafari && status?.version && status.version !== mine && localStorage.getItem('softsubs:reloaded') !== status.version) {
+    localStorage.setItem('softsubs:reloaded', status.version);
+    api.runtime.reload();
+    return;
+  }
+  if (status?.update?.available) {
+    setHelper(`Update ${status.update.latest} available`, 'warn');
+    $('helper').style.cursor = 'pointer';
+    $('helper').onclick = openPanel;
+  } else if (status) {
     setHelper(status.ffmpeg ? 'App ready' : 'App ready · no ffmpeg', status.ffmpeg ? 'ok' : 'warn');
   } else {
     setHelper('App not running', 'bad');
     $('status').textContent = 'Open the Soft Subs app (Start menu on Windows, Applications on Mac), then try again.';
   }
-  if (status?.features?.includes('devices')) {
-    $('device').onchange = updateSendLabel;
-    $('refresh-tvs').onclick = () => loadDevices(true);
-    $('manage-tvs').onclick = openPanel;
-    await loadDevices();
-  }
 
   frame = pickFrame(frames);
   if (!frame) {
     $('empty').hidden = false;
-    return;
+  } else {
+    render();
+    updateSendLabel();
+    if (!status) $('send').disabled = true;
   }
-  render();
-  updateSendLabel();
-  if (!status) $('send').disabled = true;
+
+  if (frame && status?.features?.includes('devices')) {
+    $('device').onchange = updateSendLabel;
+    $('refresh-tvs').onclick = (event) => { event.preventDefault(); loadDevices(true); };
+    $('manage-tvs').onclick = (event) => { event.preventDefault(); openPanel(); };
+    loadDevices();
+  }
 }
 
 main();

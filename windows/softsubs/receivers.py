@@ -8,6 +8,8 @@ Windows has no AirPlay of its own, so this speaks to the TV directly:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -100,6 +102,29 @@ class Receivers:
         self._storage: FileStorage | None = None
         self._pairings: dict[str, Any] = {}
         self._scan_lock = asyncio.Lock()
+        self._hosts_file = DATA_DIR / "tv-addresses.json"
+        try:
+            self.manual_hosts: list[str] = json.loads(self._hosts_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.manual_hosts = []
+
+    async def add_host(self, address: str) -> list[Device]:
+        """Remembers a TV by IP address, for networks where automatic discovery (multicast) doesn't get through."""
+        try:
+            address = str(ipaddress.ip_address(address.strip()))
+        except ValueError:
+            raise ValueError(f"“{address}” isn't an IP address. It looks like 192.168.1.50.") from None
+        added = address not in self.manual_hosts
+        if added:
+            self.manual_hosts.append(address)
+        devices = await self.scan()
+        if not any(device.address == address for device in devices):
+            if added:
+                self.manual_hosts.remove(address)
+            raise LookupError(f"No AirPlay or Chromecast TV answered at {address}. Is it on, and is the address right?")
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._hosts_file.write_text(json.dumps(self.manual_hosts), encoding="utf-8")
+        return devices
 
     async def storage(self) -> FileStorage:
         if self._storage is None:
@@ -108,23 +133,33 @@ class Receivers:
             await self._storage.load()
         return self._storage
 
+    @property
+    def scanning(self) -> bool:
+        return self._scan_lock.locked()
+
+    def scan_in_background(self) -> None:
+        if not self.scanning:
+            asyncio.get_running_loop().create_task(self.scan())
+
     async def scan(self) -> list[Device]:
         async with self._scan_lock:
             found: dict[str, Device] = {}
-            airplay, chromecasts = await asyncio.gather(self._scan_airplay(), asyncio.to_thread(self._scan_chromecast),
-                                                        return_exceptions=True)
-            for result in (airplay, chromecasts):
+            scans = [self._scan_airplay(), asyncio.to_thread(self._scan_chromecast, self.manual_hosts)]
+            if self.manual_hosts:
+                scans.append(self._scan_airplay(self.manual_hosts))  # Unicast: works without multicast.
+            for result in await asyncio.gather(*scans, return_exceptions=True):
                 if isinstance(result, Exception):
                     log(f"scan failed: {result!r}")
                     continue
                 for device in result:
                     found[device.id] = device
-            self.devices = found
+            # AirPlay first: it's the main route; Chromecast is the fallback for TVs that refuse AirPlay.
+            self.devices = dict(sorted(found.items(), key=lambda item: (item[1].kind != "airplay", item[1].name)))
             log(f"devices: {[f'{d.name} ({d.kind})' for d in found.values()]}")
             return list(found.values())
 
-    async def _scan_airplay(self) -> list[Device]:
-        configs = await pyatv.scan(asyncio.get_running_loop(), timeout=4, protocol=Protocol.AirPlay,
+    async def _scan_airplay(self, hosts: list[str] | None = None) -> list[Device]:
+        configs = await pyatv.scan(asyncio.get_running_loop(), timeout=4, protocol=Protocol.AirPlay, hosts=hosts,
                                    storage=await self.storage())
         devices = []
         for config in configs:
@@ -139,8 +174,8 @@ class Receivers:
         return devices
 
     @staticmethod
-    def _scan_chromecast() -> list[Device]:
-        services, browser = pychromecast.discovery.discover_chromecasts(timeout=4)
+    def _scan_chromecast(known_hosts: list[str]) -> list[Device]:
+        services, browser = pychromecast.discovery.discover_chromecasts(timeout=4, known_hosts=known_hosts or None)
         pychromecast.discovery.stop_discovery(browser)
         return [Device(id=f"chromecast:{info.uuid}", name=info.friendly_name, kind="chromecast",
                        address=str(info.host), config=info) for info in services]
@@ -209,7 +244,8 @@ class Receivers:
     async def _play_chromecast(self, device: Device, url: str, subtitles_url: str | None, start: float,
                                title: str) -> Playback:
         def connect():
-            casts, browser = pychromecast.get_listed_chromecasts(uuids=[device.config.uuid], discovery_timeout=6)
+            casts, browser = pychromecast.get_listed_chromecasts(uuids=[device.config.uuid], discovery_timeout=6,
+                                                                 known_hosts=self.manual_hosts or None)
             if not casts:
                 pychromecast.discovery.stop_discovery(browser)
                 raise LookupError(f"Couldn't connect to {device.name}.")

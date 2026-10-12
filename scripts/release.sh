@@ -20,7 +20,10 @@ if [[ $DRY_RUN == 0 && -n $(git status --porcelain) ]]; then
     exit 1
 fi
 
-# The app, the extension and the extension manifest all carry the version.
+# The app, the extension and the extension manifest all carry the version. A dry run puts them back after.
+mkdir -p .build
+cp project.yml .build/project.yml.orig
+cp Extension/Resources/manifest.json .build/manifest.json.orig
 sed -i '' "s/MARKETING_VERSION: .*/MARKETING_VERSION: $VERSION/" project.yml
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" Extension/Resources/manifest.json
 
@@ -57,7 +60,8 @@ fi
 echo "Packaged $ZIP ($(du -h "$ZIP" | cut -f1))"
 
 if [[ $DRY_RUN == 1 ]]; then
-    git checkout -- project.yml Extension/Resources/manifest.json
+    cp .build/project.yml.orig project.yml
+    cp .build/manifest.json.orig Extension/Resources/manifest.json
     exit 0
 fi
 
