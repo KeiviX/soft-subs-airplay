@@ -61,10 +61,16 @@ if [[ $DRY_RUN == 1 ]]; then
     exit 0
 fi
 
-git commit -qam "Release $VERSION"
+git diff --quiet || git commit -qam "Release $VERSION"
 git tag "v$VERSION"
 git push -q origin HEAD "v$VERSION"
-gh release create "v$VERSION" "$ZIP" --title "Soft Subs $VERSION" --generate-notes --notes "$(cat <<NOTES
-Download **SoftSubs-$VERSION.zip**, unzip it and move **Soft Subs** to Applications. See the README's *Install* section for first-run steps.
+gh release create "v$VERSION" "$ZIP" --title "Soft Subs $VERSION" --notes "$(cat <<NOTES
+**Mac (Safari):** download **SoftSubs-$VERSION.zip**, unzip it, and move **Soft Subs** to Applications. Or install from Terminal:
+\`curl -fsSL https://raw.githubusercontent.com/KeiviX/soft-subs-airplay/main/install.sh | bash\`
+
+**Windows (Chrome):** download **SoftSubs-Setup-$VERSION.exe** and run it, then load the extension in Chrome (Developer mode → Load unpacked → \`C:\\Program Files\\Soft Subs\\chrome-extension\`). The Windows files are added a few minutes after this release is published, once they're built.
+
+See the [README](https://github.com/KeiviX/soft-subs-airplay#readme) for setup steps.
 NOTES
 )"
+echo "Published v$VERSION. The Windows workflow will attach the installer: gh run list --workflow windows.yml"
