@@ -24,12 +24,24 @@
     /<tt[\s>]/.test(text.slice(0, 4000)) ||
     /^﻿?\s*\d+\s*\r?\n\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->/.test(text);
 
-  const inspect = (rawUrl, contentType, readText) => {
+  // Playlists are often served from URLs without an extension and with a generic type, so also check
+  // whether a response starts like one. Media and images are skipped; only the first bytes are read.
+  const PLAYLIST_START = /^\uFEFF?\s*#EXTM3U/;
+  const NOT_A_PLAYLIST = /^(video|audio|image|font)\/|javascript|css/i;
+
+  const inspect = (rawUrl, contentType, readText, readStart) => {
     let url;
     try { url = new URL(rawUrl, location.href).href; } catch { return; }
     if (!/^https?:/.test(url)) return;
-    if (STREAM.test(url) || /mpegurl|dash\+xml/i.test(contentType)) {
-      post({ kind: 'stream', url, type: streamType(url, contentType) });
+    const known = STREAM.test(url) || /mpegurl|dash\+xml/i.test(contentType);
+    if (known) post({ kind: 'stream', url, type: streamType(url, contentType) });
+    if (!known && !NOT_A_PLAYLIST.test(contentType)) {
+      // Called now, not in a later microtask: the page may start reading the body straight away.
+      new Promise((resolve) => resolve(readStart()))
+        .then((start) => {
+          if (typeof start === 'string' && PLAYLIST_START.test(start)) post({ kind: 'stream', url, type: 'hls' });
+        })
+        .catch(() => {});
     }
     if (!SUBTITLE_URL.test(url) && !SUBTITLE_TYPE.test(contentType)) return;
     Promise.resolve()
@@ -42,12 +54,26 @@
       .catch(() => {});
   };
 
+  const decodeStart = (bytes) => new TextDecoder().decode(bytes.subarray(0, 64));
+
+  // Reads one chunk of a copy of the body, then cancels it, so big responses aren't buffered twice.
+  const readResponseStart = async (response) => {
+    const reader = response.clone().body?.getReader();
+    if (!reader) return null;
+    try {
+      const { value } = await reader.read();
+      return value ? decodeStart(value) : null;
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  };
+
   const originalFetch = window.fetch;
   window.fetch = function (input, init) {
     const promise = originalFetch.apply(this, arguments);
     promise.then((response) => {
       const url = response.url || (input && input.url) || String(input);
-      inspect(url, response.headers.get('content-type') || '', () => response.clone().text());
+      inspect(url, response.headers.get('content-type') || '', () => response.clone().text(), () => readResponseStart(response));
     }, () => {});
     return promise;
   };
@@ -66,6 +92,10 @@
         if (this.response instanceof ArrayBuffer && this.response.byteLength < MAX_TEXT) {
           return new TextDecoder().decode(this.response);
         }
+        return null;
+      }, () => {
+        if (this.responseType === '' || this.responseType === 'text') return this.responseText.slice(0, 64);
+        if (this.response instanceof ArrayBuffer) return decodeStart(new Uint8Array(this.response));
         return null;
       });
     });

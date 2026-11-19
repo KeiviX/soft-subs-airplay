@@ -73,6 +73,8 @@ cat > "$NOTES" <<NOTES
 **Mac (Safari):** download **SoftSubs-$VERSION.zip**, unzip it, and move **Soft Subs** to Applications. Or install from Terminal:
 \`curl -fsSL https://raw.githubusercontent.com/KeiviX/soft-subs-airplay/main/install.sh | bash\`
 
+**Mac (Chrome, Edge, Brave…):** install the Mac app, then in its window click **Using Chrome?** → **Show Extension Folder** and load that folder with Developer mode → Load unpacked.
+
 **Windows (Chrome):** download **SoftSubs-Setup-$VERSION.exe** and run it, then load the extension in Chrome (Developer mode → Load unpacked → \`C:\\Program Files\\Soft Subs\\chrome-extension\`). The Windows files appear a few minutes after this release is published, once they are built.
 
 See the [README](https://github.com/KeiviX/soft-subs-airplay#readme) for setup steps.

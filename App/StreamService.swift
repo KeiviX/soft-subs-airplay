@@ -19,6 +19,8 @@ struct CastSession {
     var timestampBase: UInt64 = 0
     var duration = 0.0
     var version = 0
+    /// How segment audio is rewritten for the TV; see AudioFix.
+    var audioFix = AudioFix.none
     /// The source master playlist as first fetched; signed stream URLs often expire within minutes.
     var masterCache: (data: Data, url: URL)?
 
@@ -67,12 +69,42 @@ enum Upstream {
         return try await send(url, headers: retry)
     }
 
-    private static func send(_ url: URL, headers: [String: String]) async throws -> (Data, HTTPURLResponse) {
+    private static func send(_ url: URL, headers: [String: String], using session: URLSession = session,
+                             timeout: TimeInterval? = nil) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        if let timeout { request.timeoutInterval = timeout }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         return (data, http)
+    }
+
+    /// Fetches a media segment, retrying when the host stalls or fails.
+    ///
+    /// Requests to one host share a connection, so when a CDN connection stalls, every request queued on it
+    /// stalls too. A request that goes quiet for a few seconds is abandoned and tried again on a new
+    /// connection instead of waiting out the 30-second timeout while the TV runs dry.
+    static func segment(_ url: URL, headers: [String: String]) async throws -> (Data, HTTPURLResponse) {
+        let attempts = 4
+        for attempt in 0..<attempts {
+            let fresh = attempt > 0 ? URLSession(configuration: session.configuration) : nil
+            defer { fresh?.finishTasksAndInvalidate() }
+            let started = Date()
+            do {
+                // The timeout is for silence, not the whole download, so a slow but steady segment still completes.
+                let result = try await send(url, headers: headers, using: fresh ?? session, timeout: attempt == 0 ? 6 : 10)
+                if result.1.statusCode >= 500, attempt < attempts - 1 {
+                    DebugLog.log("retrying \(url.lastPathComponent): HTTP \(result.1.statusCode)")
+                    try await Task.sleep(for: .milliseconds(300 * (attempt + 1)))
+                    continue
+                }
+                return result
+            } catch let error as URLError where attempt < attempts - 1 && error.code != .cancelled {
+                DebugLog.log("retrying \(url.lastPathComponent) on a new connection after \(String(format: "%.1f", Date().timeIntervalSince(started)))s: \(error.code.rawValue)")
+                try await Task.sleep(for: .milliseconds(300 * (attempt + 1)))
+            }
+        }
+        throw URLError(.timedOut)
     }
 
     /// Loads an http(s) URL, throwing on non-2xx, or reads a file URL. Returns the final URL after redirects.
@@ -89,8 +121,24 @@ enum Upstream {
 /// Serves everything under `/s/<session>/` to AVPlayer and the TV.
 final class StreamService: @unchecked Sendable {
     private let store: SessionStore
+    private var caches: [String: SegmentCache] = [:]
+    private let cacheLock = NSLock()
 
     init(store: SessionStore) { self.store = store }
+
+    /// The session's segment cache. Caches for sessions that have ended are dropped to free their memory.
+    private func cache(for session: CastSession) -> SegmentCache {
+        cacheLock.withLock {
+            if let cache = caches[session.id] { return cache }
+            caches = caches.filter { store[$0.key] != nil }
+            let cache = SegmentCache { [weak self] url in
+                guard let self else { return .error(410, "Stopped") }
+                return await self.fetch(session, url, range: nil)
+            }
+            caches[session.id] = cache
+            return cache
+        }
+    }
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
         let parts = request.path.split(separator: "/").map(String.init)
@@ -134,6 +182,10 @@ final class StreamService: @unchecked Sendable {
                     store.update(session.id) { $0.masterCache = (data, finalURL) }
                 }
                 let text = String(decoding: data, as: UTF8.self)
+                if let reason = Playlist.unreadableReason(data, host: finalURL.host) {
+                    DebugLog.problem(reason)
+                    return .error(502, reason)
+                }
                 guard Playlist.isMaster(text) else {
                     return playlist(Playlist.syntheticMaster(mediaURI: proxyPath(session, finalURL), subtitles: session.subtitleMedia))
                 }
@@ -152,11 +204,23 @@ final class StreamService: @unchecked Sendable {
               ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             return .error(400, "Bad URL")
         }
+        let range = request.header("range")
+        if range == nil {
+            let cache = cache(for: session)
+            if await cache.isSegment(url) { return await cache.response(for: url) }
+        }
+        return await fetch(session, url, range: range)
+    }
+
+    private func fetch(_ session: CastSession, _ url: URL, range: String?) async -> HTTPResponse {
         var headers = session.headers
-        if let range = request.header("range") { headers["Range"] = range }
+        if let range { headers["Range"] = range }
 
         do {
-            let (data, response) = try await Upstream.request(url, headers: headers)
+            let isSegment = await cache(for: session).isSegment(url)
+            let (data, response) = isSegment
+                ? try await Upstream.segment(url, headers: headers)
+                : try await Upstream.request(url, headers: headers)
             let finalURL = response.url ?? url
             let contentType = response.value(forHTTPHeaderField: "Content-Type") ?? ""
             let name = "\(finalURL.host ?? "")/…/\(finalURL.lastPathComponent)"
@@ -167,6 +231,11 @@ final class StreamService: @unchecked Sendable {
             }
             if Playlist.looksLikePlaylist(data, contentType: contentType, url: finalURL) {
                 let text = String(decoding: data, as: UTF8.self)
+                if let reason = Playlist.unreadableReason(data, host: finalURL.host) {
+                    DebugLog.problem(reason)
+                    return .error(502, reason)
+                }
+                await cache(for: session).register(Playlist.segments(in: text, base: finalURL))
                 return playlist(Playlist.rewrite(text, base: finalURL) { self.proxyPath(session, $0) })
             }
             if !contentType.lowercased().contains("mp2t"), let unwrapped = SegmentSniffer.unwrap(data) {
@@ -175,12 +244,14 @@ final class StreamService: @unchecked Sendable {
                 if unwrapped.data.count == data.count, let range = response.value(forHTTPHeaderField: "Content-Range") {
                     output.headers["Content-Range"] = range
                 }
+                if range == nil, unwrapped.contentType.contains("mp2t") { output.body = await session.audioFix.apply(to: output.body, name: name) }
                 return output
             }
             var output = HTTPResponse(status: response.statusCode, body: data)
             for name in ["Content-Type", "Content-Range", "Accept-Ranges"] {
                 if let value = response.value(forHTTPHeaderField: name) { output.headers[name] = value }
             }
+            if range == nil, contentType.lowercased().contains("mp2t") { output.body = await session.audioFix.apply(to: data, name: name) }
             return output
         } catch {
             DebugLog.problem("\(url.host ?? "the video host"): \(error.localizedDescription)")

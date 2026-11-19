@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Foundation
+import Network
 
 /// What the browser extension sends to `POST /api/cast`.
 struct CastRequest: Decodable {
@@ -46,6 +47,7 @@ final class CastController: ObservableObject {
 
     let player = AVPlayer()
     let tvDisplay = TVDisplay()
+    let chromeExtension = ChromeExtension()
     let ffmpegAvailable = FFmpeg.tool("ffmpeg") != nil && FFmpeg.tool("ffprobe") != nil
 
     private let store = SessionStore()
@@ -58,6 +60,10 @@ final class CastController: ObservableObject {
     private var remuxProcess: Process?
     private var remuxFolder: URL?
     private var observations: [NSKeyValueObservation] = []
+    /// The LAN address baked into the current item's URL, which the TV fetches every segment from.
+    private var servedAddress: String?
+    private let pathMonitor = NWPathMonitor()
+    private var networkTask: Task<Void, Never>?
 
     init() {
         // Our selection must win over the user's system-wide caption preferences.
@@ -83,11 +89,15 @@ final class CastController: ObservableObject {
             DebugLog.log("AVPlayer playback stalled")
         }
         startServer()
+        pathMonitor.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor in self?.networkChanged() }
+        }
+        pathMonitor.start(queue: .main)
     }
 
     var statusText: String {
         switch phase {
-        case .idle: "Open a video in Safari and click the Soft Subs button."
+        case .idle: "Open a video in your browser and click the Soft Subs button."
         case .preparing(let message): message
         case .playing: isOnTV ? "Playing on your TV." : "Playing on this Mac. Click the AirPlay button in the video controls to send it to your TV."
         case .failed(let message): message
@@ -121,12 +131,16 @@ final class CastController: ObservableObject {
               Self.isTrusted(origin: request.header("origin")) else {
             return .error(403, "Forbidden")
         }
+        if let origin = request.header("origin"), !origin.hasPrefix("safari-web-extension://") { chromeExtension.markUsed() }
         switch (request.method, request.path) {
         case ("OPTIONS", _):
             return HTTPResponse(status: 204)
         case ("GET", "/api/status"):
             return .json([
                 "ok": true,
+                "platform": "mac",
+                // A Chrome-based browser's extension reloads itself when this differs from its own version.
+                "version": Updater.currentVersion,
                 "phase": statusText,
                 "playing": phase == .playing,
                 "title": title,
@@ -154,7 +168,8 @@ final class CastController: ObservableObject {
 
     private static func isTrusted(origin: String?) -> Bool {
         guard let origin else { return true }
-        return ["safari-web-extension://", "chrome-extension://", "moz-extension://"].contains { origin.hasPrefix($0) }
+        // webkit-extension:// is browsers built on WebKit's own extension support, such as Keivi.
+        return ["safari-web-extension://", "chrome-extension://", "moz-extension://", "webkit-extension://"].contains { origin.hasPrefix($0) }
     }
 
     // MARK: Casting
@@ -187,6 +202,8 @@ final class CastController: ObservableObject {
         tvDisplay.hide()
         castTask?.cancel()
         reloadTask?.cancel()
+        networkTask?.cancel()
+        servedAddress = nil
         remuxProcess?.terminate()
         remuxProcess = nil
         player.pause()
@@ -238,7 +255,8 @@ final class CastController: ObservableObject {
             let probe = await MediaProbe.probe(probeURL, headers: headers)
             session.duration = max(probe.duration, request.duration ?? 0)
             session.timestampBase = UInt64(max(0, probe.startTime ?? 0) * 90_000)
-            DebugLog.log("probe duration=\(probe.duration) start=\(probe.startTime.map { String($0) } ?? "unknown") cues=\(cues.count)")
+            session.audioFix = AudioFix.choose(audioChannels: probe.audioChannels)
+            DebugLog.log("probe duration=\(probe.duration) start=\(probe.startTime.map { String($0) } ?? "unknown") audioChannels=\(probe.audioChannels.map { String($0) } ?? "unknown") audioFix=\(session.audioFix.rawValue) cues=\(cues.count)")
             try Task.checkCancellation()
 
             store.put(session)
@@ -252,7 +270,7 @@ final class CastController: ObservableObject {
         } catch is CancellationError {
         } catch {
             DebugLog.log("cast failed: \(error.localizedDescription)")
-            if sessionID == id { phase = .failed(error.localizedDescription) }
+            if sessionID == id { phase = .failed(Self.failureMessage(error)) }
         }
     }
 
@@ -262,6 +280,7 @@ final class CastController: ObservableObject {
         let url = URL(string: "http://\(address):\(Self.port)\(session.pathPrefix)/master.m3u8?v=\(session.version)")!
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
+        servedAddress = address
 
         for _ in 0..<150 where item.status == .unknown {
             try await Task.sleep(for: .milliseconds(200))
@@ -312,15 +331,59 @@ final class CastController: ObservableObject {
         reloadTask?.cancel()
         reloadTask = Task {
             try? await Task.sleep(for: .milliseconds(700))
-            guard !Task.isCancelled, let session = store[id] else { return }
-            let time = player.currentTime()
-            let wasPlaying = player.rate > 0
+            guard !Task.isCancelled else { return }
+            await reload(id)
+        }
+    }
+
+    /// Reloads the current item at the same position. The AirPlay route survives the swap, so the TV
+    /// just picks up the new URL.
+    private func reload(_ id: String, attempts: Int = 1) async {
+        guard sessionID == id, let session = store[id] else { return }
+        let time = player.currentTime()
+        let wasPlaying = player.rate > 0
+        for attempt in 1...attempts {
             do {
                 try await load(session, at: time)
                 if wasPlaying { player.play() }
+                return
+            } catch is CancellationError {
+                return
             } catch {
-                phase = .failed(error.localizedDescription)
+                guard attempt < attempts, sessionID == id else {
+                    phase = .failed(Self.failureMessage(error))
+                    return
+                }
+                DebugLog.log("reload attempt \(attempt) failed: \(error.localizedDescription); trying again")
+                try? await Task.sleep(for: .seconds(3))
             }
         }
+    }
+
+    // MARK: Network changes
+
+    /// When Wi-Fi reconnects, DHCP can hand this Mac a different address. The TV keeps fetching segments
+    /// from the old one, plays out its buffer and then goes silent, so point it at the new address.
+    private func networkChanged() {
+        networkTask?.cancel()
+        networkTask = Task {
+            // Path updates come in bursts while an interface comes up; let the address settle.
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            let address = LANAddress.current()
+            lanAddress = address
+            guard phase == .playing, let id = sessionID, let address, let old = servedAddress, address != old else { return }
+            DebugLog.log("LAN address changed \(old) -> \(address); reloading the stream for the TV")
+            reloadTask?.cancel()
+            // macOS rebuilds the AirPlay connection on the new network too, which can take longer than one load.
+            reloadTask = Task { await reload(id, attempts: 3) }
+        }
+    }
+
+    /// What the person sees when a cast fails: the reason, then a nudge toward another stream.
+    private static func failureMessage(_ error: Error) -> String {
+        let reason = error.localizedDescription.trimmingCharacters(in: .whitespaces)
+        let ended = reason.last.map { ".!?)".contains($0) } ?? true
+        return reason + (ended ? "" : ".") + " Let's try a different source."
     }
 }

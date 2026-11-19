@@ -1,10 +1,10 @@
 # Soft Subs AirPlay
 
-Cast web videos to your TV, **with their subtitles**: from Safari on a Mac via AirPlay, or from Chrome on Windows to Chromecast TVs.
+Cast web videos to your TV, **with their subtitles**: from Safari or a Chrome-based browser on a Mac via AirPlay, or from Chrome on Windows to Chromecast TVs.
 
 Normal AirPlay drops the subtitles on most sites. Soft Subs rebuilds the video stream with the subtitles inside it, so your TV shows them as real, toggleable subtitles.
 
-**Jump to:** [Mac (Safari)](#quick-setup) · [Windows (Chrome)](#windows-chrome)
+**Jump to:** [Mac (Safari)](#quick-setup) · [Mac (Chrome, Edge, Brave…)](#mac-chrome-based-browsers) · [Windows (Chrome)](#windows-chrome)
 
 ![The Soft Subs window playing a video with subtitles](docs/app-window.png)
 
@@ -34,6 +34,18 @@ Installer options: `… | bash -s -- --source` builds from source; `--no-ffmpeg`
 4. Optional: `brew install ffmpeg`.
 
 </details>
+
+## Mac: Chrome-based browsers
+
+The Mac app also works with Chrome, Edge, Brave, Arc and other Chrome-based browsers. Install the app as above, then add the extension:
+
+1. In the Soft Subs window, click **Using Chrome?** → **Show Extension Folder** (or **Soft Subs → Show Chrome Extension Folder** in the menu bar). That opens `~/Library/Application Support/Soft Subs/Chrome Extension` and copies its path.
+2. Open the browser's extensions page (`chrome://extensions`), turn on **Developer mode**, and click **Load unpacked**.
+3. Press **⌘⇧G**, paste the path, press Return, then click **Select**.
+
+Then use it as in Safari: play the video, click **Soft Subs → Send to TV**, and pick your TV with the AirPlay button in the Soft Subs window. The app refreshes that folder when it updates, and the extension reloads itself to match.
+
+Browsers that run Chrome extensions on WebKit, such as Keivi, work too: install the same folder as an unpacked extension. Keivi copies extensions when it installs them, so reinstall it after Soft Subs updates.
 
 ## Windows (Chrome)
 
@@ -74,9 +86,9 @@ Coming from 0.1.0? Install 0.1.1 manually once; it has the updater.
 
 | | |
 |---|---|
-| macOS | 15 Sequoia or later, Apple silicon or Intel |
+| macOS | 14 Sonoma or later, Apple silicon or Intel |
 | Windows | Windows 10 or 11 (x64; ARM64 runs it through emulation), Chrome or Edge 111+ |
-| Browser | Safari on Mac; Chrome or Edge on Windows |
+| Browser | Safari or a Chrome-based browser (Chrome 111+, Edge, Brave, Arc…) on Mac; Chrome or Edge on Windows |
 | TV | Mac: an AirPlay receiver (Apple TV, or an AirPlay 2 TV from Samsung, LG, Sony, Vizio…). Windows: a TV with Chromecast built in, or a Chromecast dongle. Same network as the computer |
 | ffmpeg | Mac: optional but recommended (`brew install ffmpeg`), needed for MP4/DASH sources and exact subtitle timing. Windows: bundled |
 | Building from source | Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) |

@@ -10,7 +10,10 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
         var reply: [String: Any] = ["ok": true]
         if message?["action"] as? String == "launchApp" {
-            reply["launched"] = NSWorkspace.shared.open(URL(string: "softsubs://open")!)
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false // start in the background; don't pull focus from the browser
+            NSWorkspace.shared.open(URL(string: "softsubs://open")!, configuration: configuration)
+            reply["launched"] = true
         }
 
         let response = NSExtensionItem()

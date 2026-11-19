@@ -148,7 +148,7 @@ class Controller:
             raise
         except Exception as error:
             if self.session_id == session_id:
-                self._set("failed", _describe(error))
+                self._set("failed", _describe(error) + " Let's try a different source.")
 
     async def send(self, device_id: str, start: float | None = None) -> None:
         session = self.session

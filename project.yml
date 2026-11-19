@@ -1,7 +1,7 @@
 name: SoftSubsAirPlay
 options:
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -23,6 +23,12 @@ targets:
         PRODUCT_NAME: Soft Subs
         PRODUCT_MODULE_NAME: SoftSubs
         PRODUCT_BUNDLE_IDENTIFIER: com.keivi.softsubs
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postCompileScripts:
+      # The Chrome build of the extension, for Chrome-based browsers on the Mac (Load unpacked).
+      - name: Bundle Chrome extension
+        script: python3 "$SRCROOT/scripts/build_chrome.py" --out "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/chrome-extension"
+        basedOnDependencyAnalysis: false
     info:
       path: App/Info.plist
       properties:

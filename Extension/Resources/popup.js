@@ -24,21 +24,25 @@ function setHelper(text, tone) {
 }
 
 // The helper app hosts the stream for the TV. If it isn't running, launch it (Safari: through the
-// extension's native handler; Chrome on Windows: through the softsubs:// link the installer registers),
+// extension's native handler; other browsers: through the softsubs:// link the app registers),
 // then wait for its server to come up.
 async function ensureHelper() {
   try {
     return await helper('/api/status');
   } catch {}
   setHelper('Starting app…', 'warn');
-  try {
-    if (isSafari) {
-      await api.runtime.sendNativeMessage('com.keivi.softsubs', { action: 'launchApp' });
-    } else {
+  let launched = false;
+  if (isSafari) {
+    try {
+      launched = !!(await api.runtime.sendNativeMessage('com.keivi.softsubs', { action: 'launchApp' }))?.launched;
+    } catch {}
+  }
+  if (!launched) {
+    try {
       const launcher = await api.tabs.create({ url: 'softsubs://start', active: false });
       setTimeout(() => api.tabs.remove(launcher.id).catch(() => {}), 3000);
-    }
-  } catch {}
+    } catch {}
+  }
   for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(500);
     try {
@@ -148,6 +152,18 @@ function renderSubtitles(selectedId) {
   }
 }
 
+// Why no stream was found, in terms of what the person can do about it.
+function missingStreamReason(video) {
+  if (video.drm) {
+    return "This video is copy-protected (DRM), so only the site's own player can play it. It can't be cast; use Screen Mirroring instead.";
+  }
+  if (video.sourceKind === 'blob') {
+    return "The site's player loads this video itself, and the extension didn't see where from. Reload the page, start the video, then try again. "
+      + "If it still isn't found, the site may be hiding its stream (some encrypt it); try another server on the page, or Screen Mirroring.";
+  }
+  return "Couldn't find the stream URL. Reload the page with the extension enabled, start the video, then try again.";
+}
+
 function render() {
   const video = frame.video;
   $('found').hidden = false;
@@ -168,9 +184,7 @@ function render() {
     option.title = stream.url;
     select.append(option);
   }
-  if (!streams.length) {
-    $('status').textContent = "Couldn't find the stream URL. Reload the page with the extension enabled, start the video, then try again.";
-  }
+  if (!streams.length) $('status').textContent = missingStreamReason(video);
 
   const refreshChoices = () => {
     const type = select.selectedOptions[0]?.dataset.type;
@@ -274,7 +288,7 @@ async function send() {
       subtitles = { label: choice.label, language: choice.language || '', cues };
     }
 
-    await helper('/api/cast', {
+    const result = await helper('/api/cast', {
       url,
       title: tab.title,
       headers: await buildHeaders(url),
@@ -286,6 +300,11 @@ async function send() {
       device: device?.id,
     });
     Promise.resolve(api.tabs.sendMessage(tab.id, { type: 'softsubs:pause', frameKey: frame.frameKey })).catch(() => {});
+    // v2 helpers have no window: the browser plays their player page and hands it to the TV over AirPlay.
+    if (result.playerUrl) {
+      await api.tabs.create({ url: result.playerUrl, active: true });
+      return;
+    }
     watchStatus();
   } catch (error) {
     $('status').textContent = error.message;
@@ -297,7 +316,7 @@ async function watchStatus() {
   for (;;) {
     try {
       const status = await helper('/api/status');
-      $('status').textContent = status.platform !== 'windows' && status.playing && !status.onTV
+      $('status').textContent = status.platform !== 'windows' && !status.v2 && status.playing && !status.onTV
         ? 'Playing on your Mac. Click the AirPlay button in the Soft Subs video controls.'
         : status.phase;
     } catch {

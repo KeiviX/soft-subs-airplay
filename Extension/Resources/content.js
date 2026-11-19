@@ -49,6 +49,9 @@
       paused: video.paused,
       area: Math.round(rect.width * rect.height),
       src: /^https?:/.test(src) ? src : null,
+      // A blob: source means the page's player feeds the video in itself, so its address isn't on the element.
+      sourceKind: /^https?:/.test(src) ? 'url' : /^blob:/.test(src) ? 'blob' : src ? 'other' : 'none',
+      drm: !!video.mediaKeys,
     };
   };
 

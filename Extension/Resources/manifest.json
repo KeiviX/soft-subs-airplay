@@ -20,24 +20,50 @@
       "38": "toolbar-38.png"
     }
   },
-  "permissions": ["tabs", "cookies", "nativeMessaging"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "tabs",
+    "cookies",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["page-hook.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "page-hook.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
-      "world": "MAIN"
+      "world": "MAIN",
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["subtitles.js", "content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "subtitles.js",
+        "content.js"
+      ],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ],
   "web_accessible_resources": [
-    { "resources": ["page-hook.js"], "matches": ["<all_urls>"] }
+    {
+      "resources": [
+        "page-hook.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
   ]
 }

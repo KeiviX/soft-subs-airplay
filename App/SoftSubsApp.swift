@@ -15,9 +15,14 @@ struct SoftSubsApp: App {
                 .environmentObject(cast)
                 .environmentObject(safariExtension)
                 .environmentObject(updater)
-                .onOpenURL { _ in NSApp.activate() }
+                .onOpenURL { _ in } // softsubs:// only starts the app; stay in the background
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appSettings) {
+                Button("Show Chrome Extension Folder") { cast.chromeExtension.reveal() }
+            }
+        }
     }
 }
 
@@ -36,9 +41,7 @@ struct ContentView: View {
             if updater.isUpdateAvailable {
                 UpdateBanner(updater: updater)
             }
-            if !safariExtension.isEnabled {
-                ExtensionBanner(status: safariExtension)
-            }
+            ExtensionBanner(safari: safariExtension, chrome: cast.chromeExtension)
             VideoPlayer(player: cast.player)
                 .overlay {
                     if cast.phase == .idle {
@@ -147,10 +150,19 @@ struct TVButtons: View {
     }
 }
 
+/// Setup help until the extension is on in Safari or a Chrome-based browser has used it.
 struct ExtensionBanner: View {
-    @ObservedObject var status: SafariExtensionStatus
+    @ObservedObject var safari: SafariExtensionStatus
+    @ObservedObject var chrome: ChromeExtension
+    @State private var showChromeSteps = false
 
     var body: some View {
+        if !safari.isEnabled && !chrome.isInUse {
+            if showChromeSteps { chromeSteps } else { safariSteps }
+        }
+    }
+
+    private var safariSteps: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "puzzlepiece.extension")
                 .font(.title2)
@@ -165,7 +177,39 @@ struct ExtensionBanner: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Button("Open Safari Settings", action: status.openSafariSettings)
+            VStack(alignment: .trailing, spacing: 6) {
+                Button("Open Safari Settings", action: safari.openSafariSettings)
+                Button("Using Chrome?") { showChromeSteps = true }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+        }
+        .padding(12)
+        .background(.orange.opacity(0.12))
+    }
+
+    private var chromeSteps: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Add Soft Subs to Chrome, Edge, Brave or another Chrome-based browser")
+                    .font(.headline)
+                Text("Open its extensions page (chrome://extensions), turn on Developer mode, click Load unpacked, "
+                     + "press ⌘⇧G, paste (the button below copies the folder's path) and press Return, then Select. "
+                     + "Other browsers, such as Keivi: install that folder as an unpacked extension.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                Button("Show Extension Folder", action: chrome.reveal)
+                Button("Using Safari?") { showChromeSteps = false }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
         }
         .padding(12)
         .background(.orange.opacity(0.12))

@@ -14,6 +14,15 @@ enum Playlist {
         return start.hasPrefix("#EXTM3U")
     }
 
+    /// Some sites send playlists encrypted and decrypt them in their own player. Anything that claims to be a
+    /// playlist but doesn't start with #EXTM3U can't be played by AVPlayer, so say so instead of a CoreMedia code.
+    static func unreadableReason(_ data: Data, host: String?) -> String? {
+        let start = String(decoding: data.prefix(32), as: UTF8.self)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}").union(.whitespacesAndNewlines))
+        guard !start.hasPrefix("#EXTM3U") else { return nil }
+        return "\(host ?? "This site") sends its playlist encrypted, so only its own player can read it. It can't be cast"
+    }
+
     static func lines(_ text: String) -> [String] {
         text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
     }
@@ -167,6 +176,27 @@ enum Playlist {
         guard let length = Int(parts[0]), length > 0 else { return nil }
         let offset = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
         return "bytes=\(offset)-\(offset + length - 1)"
+    }
+
+    /// A media playlist's segments in play order, with their durations. Byte-range segments are left out:
+    /// they're fetched with a Range header, which the segment cache doesn't handle.
+    static func segments(in media: String, base: URL) -> [(url: URL, duration: Double)] {
+        var result: [(url: URL, duration: Double)] = []
+        var duration: Double?
+        var byteRange = false
+        for line in lines(media) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#EXTINF:") {
+                duration = Double(trimmed.dropFirst(8).prefix { $0 != "," }.trimmingCharacters(in: .whitespaces))
+            } else if trimmed.hasPrefix("#EXT-X-BYTERANGE:") {
+                byteRange = true
+            } else if !trimmed.isEmpty, !trimmed.hasPrefix("#") {
+                if let duration, !byteRange, let url = proxiable(trimmed, base: base) { result.append((url, duration)) }
+                duration = nil
+                byteRange = false
+            }
+        }
+        return result
     }
 
     static func totalDuration(_ media: String) -> Double {

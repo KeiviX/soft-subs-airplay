@@ -25,7 +25,7 @@ fail() { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 [[ $(uname) == Darwin ]] || fail "Soft Subs runs on macOS only."
 MACOS_MAJOR=$(sw_vers -productVersion | cut -d. -f1)
-(( MACOS_MAJOR >= 15 )) || fail "Soft Subs needs macOS 15 or later (this Mac has $(sw_vers -productVersion))."
+(( MACOS_MAJOR >= 14 )) || fail "Soft Subs needs macOS 14 or later (this Mac has $(sw_vers -productVersion))."
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

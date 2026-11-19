@@ -75,6 +75,8 @@ enum MediaProbe {
         var duration = 0.0
         /// The first segment's presentation time in seconds, or nil when it couldn't be measured.
         var startTime: Double?
+        /// The first audio stream's channel count, when the first segment could be probed.
+        var audioChannels: Int?
     }
 
     static func isHLS(_ url: URL, headers: [String: String]) async -> Bool {
@@ -106,26 +108,35 @@ enum MediaProbe {
             }
             media += try await Upstream.load(segment, headers: headers.with(range: Playlist.firstSegmentRange(in: text))).0
             let isTS = SegmentSniffer.unwrap(media) != nil
-            result.startTime = await startTime(of: SegmentSniffer.unwrap(media)?.data ?? media,
-                                               fileExtension: isTS ? "ts" : segment.pathExtension)
+            let measured = await measure(SegmentSniffer.unwrap(media)?.data ?? media,
+                                         fileExtension: isTS ? "ts" : segment.pathExtension)
+            result.startTime = measured.startTime
+            result.audioChannels = measured.audioChannels
             return result
         } catch {
             return Result()
         }
     }
 
-    private static func startTime(of media: Data, fileExtension: String) async -> Double? {
-        guard let ffprobe = FFmpeg.tool("ffprobe") else { return nil }
+    /// The segment's start time and its first audio stream's channel count.
+    private static func measure(_ media: Data, fileExtension: String) async -> (startTime: Double?, audioChannels: Int?) {
+        guard let ffprobe = FFmpeg.tool("ffprobe") else { return (nil, nil) }
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("softsubs-probe-\(UUID().uuidString).\(fileExtension.isEmpty ? "ts" : fileExtension)")
-        guard (try? media.write(to: file)) != nil else { return nil }
+        guard (try? media.write(to: file)) != nil else { return (nil, nil) }
         defer { try? FileManager.default.removeItem(at: file) }
 
         let process = Process()
         process.executableURL = ffprobe
-        process.arguments = ["-v", "error", "-show_entries", "format=start_time", "-of", "default=nw=1:nk=1", file.path]
-        guard let result = try? await FFmpeg.run(process), result.status == 0 else { return nil }
-        return Double(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+        process.arguments = ["-v", "error", "-select_streams", "a:0", "-show_entries", "format=start_time:stream=channels",
+                             "-of", "default=nw=1", file.path]
+        guard let result = try? await FFmpeg.run(process), result.status == 0 else { return (nil, nil) }
+        var values: [String: String] = [:]
+        for line in result.output.split(separator: "\n") {
+            let pair = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            if pair.count == 2 { values[pair[0]] = pair[1] }
+        }
+        return (values["start_time"].flatMap(Double.init), values["channels"].flatMap(Int.init))
     }
 }
 
