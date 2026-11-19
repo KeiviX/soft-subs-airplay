@@ -1,0 +1,26 @@
+[package]
+name = "softsubs-helper"
+version = "2.0.0-dev"
+edition = "2021"
+rust-version = "1.88"
+description = "Soft Subs v2 helper: serves web video to AirPlay/Chromecast TVs with subtitles, no window."
+publish = false
+
+[dependencies]
+axum = "0.7"
+bytes = "1"
+futures = "0.3"
+humantime = "2"
+if-addrs = "0.13"
+percent-encoding = "2"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+strip = true
