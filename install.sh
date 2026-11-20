@@ -47,6 +47,9 @@ if [[ $FROM_SOURCE == 1 ]]; then
         command -v brew >/dev/null || fail "Building from source needs XcodeGen. Install Homebrew (https://brew.sh), then run this again."
         brew install xcodegen
     fi
+    if ! command -v cargo >/dev/null && [[ ! -x $HOME/.cargo/bin/cargo ]]; then
+        fail "Building from source needs Rust for the helper. Install it with: curl https://sh.rustup.rs -sSf | sh"
+    fi
     git clone --depth 1 "https://github.com/$REPO.git" "$WORK/src"
     "$WORK/src/build.sh"
     BUILT="$WORK/src/build/$APP_NAME"
@@ -89,4 +92,5 @@ Last step, in Safari:
      then Develop → Allow Unsigned Extensions (Safari resets this when it quits).
 
 The Soft Subs app shows a reminder with an "Open Safari Settings" button until the extension is on.
+After that you can close it: its helper keeps running in the background (Login Items).
 NEXT

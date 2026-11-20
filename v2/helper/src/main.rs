@@ -24,6 +24,7 @@ use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() {
+    server::mark_started();
     let port: u16 = std::env::var("SOFTSUBS_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(47800);
     let app = server::App::new(port);
     let router = axum::Router::new().fallback(server::route).with_state(app);

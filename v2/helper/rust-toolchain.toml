@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.88.0"
 profile = "minimal"
+# Both Mac architectures, so the app bundles one universal helper.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

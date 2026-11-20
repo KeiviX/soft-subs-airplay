@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Soft Subs helper as a login item: registered by the app with SMAppService, started at login and
+     restarted by launchd if it ever exits. BundleProgram is relative to Soft Subs.app. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.keivi.softsubs.helper</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/softsubs-helper</string>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.keivi.softsubs</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SOFTSUBS_QUIET</key>
+        <string>1</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

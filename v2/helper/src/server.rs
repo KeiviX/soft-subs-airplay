@@ -113,6 +113,9 @@ pub struct App {
     caches: Mutex<HashMap<String, Arc<SegmentCache>>>,
     cast: Mutex<Cast>,
     devices: Mutex<dlna::Registry>,
+    /// Set once a Chrome-based browser's extension has talked to the helper, so the Mac app's setup
+    /// banner can stop asking for Safari.
+    chrome_used: std::sync::atomic::AtomicBool,
     me: Weak<App>,
 }
 
@@ -124,6 +127,7 @@ impl App {
             caches: Mutex::new(HashMap::new()),
             cast: Mutex::new(Cast::default()),
             devices: Mutex::new(dlna::Registry::default()),
+            chrome_used: std::sync::atomic::AtomicBool::new(false),
             me: me.clone(),
         })
     }
@@ -204,9 +208,21 @@ impl App {
             if !trusted {
                 return Resp::error(403, "Forbidden");
             }
+            if origin.as_deref().is_some_and(|origin| origin.starts_with("chrome-extension://")) {
+                self.chrome_used.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             return match (method.as_str(), endpoint) {
                 ("GET", "status") => self.status(),
                 ("GET", "devices") => self.devices(query.contains_key("refresh")),
+                // The Mac app restarts an outdated helper after an update; launchd starts the new one.
+                ("POST", "quit") if remote.ip().is_loopback() && origin.is_none() => {
+                    log::log("quitting at the app's request");
+                    tokio::spawn(async {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        std::process::exit(0);
+                    });
+                    Resp::json(json!({ "ok": true }))
+                }
                 ("POST", "cast") => self.start_cast(&body),
                 ("POST", "stop") => {
                     self.stop();
@@ -295,6 +311,10 @@ impl App {
             "onTV": on_tv || (phase == Phase::Ready && cast.device.is_some()),
             // The extension shows a TV list (AirPlay, plus DLNA TVs found on the network).
             "features": ["devices"],
+            "chromeUsed": self.chrome_used.load(std::sync::atomic::Ordering::Relaxed),
+            // The Mac app restarts the helper when its bundled copy is newer than this, or isn't this one.
+            "startedAt": started_at(),
+            "executable": std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),
             "title": cast.title,
             "lanAddress": lan::current(),
             "ffmpeg": ffmpeg::available(),
@@ -974,4 +994,16 @@ fn use_mkv(session: &Session) -> bool {
         Ok("mkv") => true,
         _ => !session.cues.is_empty(),
     }
+}
+
+/// When this helper started, in seconds since 1970.
+fn started_at() -> u64 {
+    static STARTED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *STARTED.get_or_init(|| {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    })
+}
+
+pub fn mark_started() {
+    let _ = started_at();
 }

@@ -29,6 +29,10 @@ targets:
       - name: Bundle Chrome extension
         script: python3 "$SRCROOT/scripts/build_chrome.py" --out "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/chrome-extension"
         basedOnDependencyAnalysis: false
+      # The Rust helper that serves streams to the TV, and its login-item plist (v2).
+      - name: Bundle helper
+        script: '"$SRCROOT/scripts/bundle_helper.sh"'
+        basedOnDependencyAnalysis: false
     info:
       path: App/Info.plist
       properties:
@@ -37,6 +41,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.entertainment
         NSLocalNetworkUsageDescription: Soft Subs serves the video and its subtitles to your TV over your local network.
+        # The helper does the work in the background; the app is only for setup.
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         CFBundleURLTypes:
