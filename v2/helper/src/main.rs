@@ -7,6 +7,7 @@
 
 mod audiofix;
 mod cache;
+mod dlna;
 mod ffmpeg;
 mod lan;
 mod log;

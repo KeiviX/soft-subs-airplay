@@ -1,6 +1,7 @@
 //! The HTTP server: the extension's API (`/api/...`), and per-cast routes under `/s/<id>/` that serve the
 //! player page and the rebuilt stream to the browser and the TV.
 
+use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -21,7 +22,7 @@ use crate::cache::SegmentCache;
 use crate::resp::Resp;
 use crate::upstream::{self, Headers};
 use crate::webvtt::{self, Cue};
-use crate::{ffmpeg, lan, log, playlist, probe, remux, sniff};
+use crate::{dlna, ffmpeg, lan, log, playlist, probe, remux, sniff};
 
 const PLAYER_PAGE: &str = include_str!("player.html");
 
@@ -102,6 +103,8 @@ struct Cast {
     report: Option<PlayerReport>,
     task: Option<JoinHandle<()>>,
     remux_folder: Option<PathBuf>,
+    /// The DLNA TV this cast was sent to; None means the browser plays it (AirPlay).
+    device: Option<dlna::Renderer>,
 }
 
 pub struct App {
@@ -109,6 +112,7 @@ pub struct App {
     sessions: RwLock<HashMap<String, Session>>,
     caches: Mutex<HashMap<String, Arc<SegmentCache>>>,
     cast: Mutex<Cast>,
+    devices: Mutex<dlna::Registry>,
     me: Weak<App>,
 }
 
@@ -119,6 +123,7 @@ impl App {
             sessions: RwLock::new(HashMap::new()),
             caches: Mutex::new(HashMap::new()),
             cast: Mutex::new(Cast::default()),
+            devices: Mutex::new(dlna::Registry::default()),
             me: me.clone(),
         })
     }
@@ -177,7 +182,9 @@ impl App {
         // Read in their own scope: the request body isn't Sync, so nothing may borrow it across an await.
         let (origin, range, agent) = {
             let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
-            (header("origin"), header("range"), header("user-agent"))
+            // "bytes=0-" (ffmpeg sends it) asks for the whole file, so treat it like no Range at all.
+            let range = header("range").filter(|range| range.replace(' ', "") != "bytes=0-");
+            (header("origin"), range, header("user-agent"))
         };
         let body = axum::body::to_bytes(request.into_body(), 64 << 20).await.unwrap_or_default();
 
@@ -199,6 +206,7 @@ impl App {
             }
             return match (method.as_str(), endpoint) {
                 ("GET", "status") => self.status(),
+                ("GET", "devices") => self.devices(query.contains_key("refresh")),
                 ("POST", "cast") => self.start_cast(&body),
                 ("POST", "stop") => {
                     self.stop();
@@ -218,6 +226,9 @@ impl App {
             ("GET", "info") => return self.info(&id),
             ("POST", "state") => return self.player_state(&id, &body),
             ("POST", "offset") => return self.nudge_subtitles(&id, &body),
+            ("POST", "dlna/play" | "dlna/pause" | "dlna/seek") | ("GET", "dlna/position") => {
+                return self.dlna_control(&id, &rest[5..], &body).await;
+            }
             ("POST", "stop") => {
                 if self.cast.lock().unwrap().session_id.as_deref() == Some(id.as_str()) {
                     self.stop();
@@ -238,6 +249,7 @@ impl App {
 
         match rest.as_str() {
             "master.m3u8" => self.master(&session, start_position(&query)).await,
+            "subs.srt" => Resp::text(webvtt::srt(&session.cues, session.subtitle_offset), "text/srt; charset=utf-8"),
             "subs.m3u8" => {
                 let last_cue = session.cues.iter().map(|cue| cue.end).fold(0.0, f64::max) + session.subtitle_offset;
                 let duration = session.duration.max(last_cue).max(1.0);
@@ -268,15 +280,21 @@ impl App {
         let on_tv = phase == Phase::Ready && recent.is_some_and(|report| report.wireless);
         let playing = phase == Phase::Ready && recent.is_some_and(|report| report.playing);
         let player_url = cast.session_id.as_ref().and_then(|id| self.player_url(id));
+        let phase_line = match (&phase, &cast.device) {
+            (Phase::Ready, Some(device)) => format!("Playing on {}. Control it from the Soft Subs tab.", device.name),
+            _ => phase_text(&phase, recent),
+        };
         Resp::json(json!({
             "ok": true,
             "platform": if cfg!(target_os = "macos") { "mac" } else { "windows" },
             "v2": true,
             // A Chrome-based browser's extension reloads itself when this differs from its own version.
             "version": env!("CARGO_PKG_VERSION"),
-            "phase": phase_text(&phase, recent),
-            "playing": playing,
-            "onTV": on_tv,
+            "phase": phase_line,
+            "playing": playing || (phase == Phase::Ready && cast.device.is_some()),
+            "onTV": on_tv || (phase == Phase::Ready && cast.device.is_some()),
+            // The extension shows a TV list (AirPlay, plus DLNA TVs found on the network).
+            "features": ["devices"],
             "title": cast.title,
             "lanAddress": lan::current(),
             "ffmpeg": ffmpeg::available(),
@@ -302,6 +320,13 @@ impl App {
             request.subtitles.as_ref().map_or(0, |s| s.cues.len()),
             request.headers.as_ref().map(|h| { let mut keys: Vec<_> = h.keys().cloned().collect(); keys.sort(); keys }).unwrap_or_default()
         ));
+        let device = match request.device.as_deref() {
+            Some(id) if id.starts_with("dlna:") => match self.devices.lock().unwrap().renderers.get(id).cloned() {
+                Some(renderer) => Some(renderer),
+                None => return Resp::error(404, "That TV isn't on the network any more. Refresh the TV list and try again."),
+            },
+            _ => None,
+        };
         let id = uuid::Uuid::new_v4().to_string();
         let Some(player_url) = self.player_url(&id) else {
             return Resp::error(503, "This computer isn't on a local network, so the TV can't reach it.");
@@ -316,6 +341,7 @@ impl App {
             cast.title = request.title.clone().unwrap_or_else(|| "Video".into());
             cast.start_time = request.start_time.unwrap_or(0.0);
             cast.report = None;
+            cast.device = device;
             let _ = log::take_problem();
             cast.task = Some(tokio::spawn(async move { app.prepare(task_id, request).await }));
         }
@@ -397,11 +423,17 @@ impl App {
         };
         let track = (!session.cues.is_empty()).then(|| session.subtitle_label.clone());
         self.sessions.write().unwrap().insert(id.to_string(), session);
-        let mut cast = self.cast.lock().unwrap();
-        if cast.session_id.as_deref() == Some(id) {
-            cast.subtitle_summary = summary;
-            cast.subtitle_track = track;
-            cast.phase = Some(Phase::Ready);
+        let (device, start_time) = {
+            let mut cast = self.cast.lock().unwrap();
+            if cast.session_id.as_deref() == Some(id) {
+                cast.subtitle_summary = summary;
+                cast.subtitle_track = track;
+                cast.phase = Some(Phase::Ready);
+            }
+            (cast.device.clone(), cast.start_time)
+        };
+        if let Some(renderer) = device {
+            self.dlna_load(id, &renderer, start_time).await?;
         }
         Ok(())
     }
@@ -417,6 +449,11 @@ impl App {
         }
         if let Some(folder) = cast.remux_folder.take() {
             let _ = std::fs::remove_dir_all(folder);
+        }
+        if let Some(renderer) = cast.device.take() {
+            tokio::spawn(async move {
+                let _ = dlna::stop(&renderer).await;
+            });
         }
         *cast = Cast::default();
     }
@@ -441,6 +478,8 @@ impl App {
             "title": cast.title,
             "startTime": cast.start_time,
             "subtitles": cast.subtitle_summary,
+            "mode": if cast.device.is_some() { "dlna" } else { "airplay" },
+            "device": cast.device.as_ref().map(|d| d.name.clone()),
             "offset": session.as_ref().map_or(0.0, |s| s.subtitle_offset),
             "master": session.as_ref().map(|s| format!("{}/master.m3u8?v={}", s.prefix(), s.version)),
         }))
@@ -480,6 +519,19 @@ impl App {
             session.subtitle_offset = ((session.subtitle_offset + nudge.delta) * 100.0).round() / 100.0;
             session.version += 1;
         });
+        let device = self.cast.lock().unwrap().device.clone();
+        if let (Some(renderer), Some(_)) = (device, &updated) {
+            // The TV reads the .srt once, so reload the video (with the new subtitles) where it is.
+            let app = self.me.upgrade();
+            let id = id.to_string();
+            tokio::spawn(async move {
+                let Some(app) = app else { return };
+                let at = dlna::position(&renderer).await.map(|p| p.time).unwrap_or(0.0);
+                if let Err(error) = app.dlna_load(&id, &renderer, at).await {
+                    log::problem(error);
+                }
+            });
+        }
         match updated {
             Some(session) => Resp::json(json!({
                 "ok": true,
@@ -488,6 +540,213 @@ impl App {
             })),
             None => Resp::error(404, "Unknown session"),
         }
+    }
+
+    // MARK: DLNA
+
+    /// TVs to offer in the extension. Searching takes a few seconds, so it runs in the background and the
+    /// extension polls while `scanning` is true.
+    fn devices(&self, refresh: bool) -> Resp {
+        let mut registry = self.devices.lock().unwrap();
+        if (refresh || registry.renderers.is_empty()) && !registry.scanning {
+            registry.scanning = true;
+            let app = self.me.clone();
+            tokio::spawn(async move {
+                let found = dlna::discover(Duration::from_secs(3)).await;
+                let Some(app) = app.upgrade() else { return };
+                let mut registry = app.devices.lock().unwrap();
+                for renderer in found {
+                    registry.renderers.insert(renderer.id.clone(), renderer);
+                }
+                registry.scanning = false;
+            });
+        }
+        let mut devices = Vec::new();
+        if cfg!(target_os = "macos") {
+            devices.push(json!({ "id": "airplay", "name": "AirPlay TV" }));
+        }
+        let mut renderers: Vec<&dlna::Renderer> = registry.renderers.values().collect();
+        renderers.sort_by(|a, b| a.name.cmp(&b.name));
+        for renderer in renderers {
+            devices.push(json!({ "id": renderer.id, "name": format!("{} (DLNA)", renderer.name) }));
+        }
+        Resp::json(json!({ "ok": true, "devices": devices, "scanning": registry.scanning }))
+    }
+
+    /// Sends the session's continuous stream (and subtitles) to the TV, starting at `at` seconds.
+    async fn dlna_load(&self, id: &str, renderer: &dlna::Renderer, at: f64) -> Result<(), String> {
+        let session = self.session(id).ok_or("The cast has ended.")?;
+        let address = lan::current().ok_or("This computer isn't on a local network, so the TV can't reach it.")?;
+        let base = format!("http://{address}:{}{}", self.port, session.prefix());
+        let mkv = use_mkv(&session);
+        let url = format!("{base}/dlna.{}?v={}", if mkv { "mkv" } else { "ts" }, session.version);
+        // In an MKV the subtitles are inside the file; only the TS variant points the TV at an .srt.
+        let subtitles = (!mkv && !session.cues.is_empty()).then(|| format!("{base}/subs.srt?v={}", session.version));
+        let title = self.cast.lock().unwrap().title.clone();
+        log::log(format!("DLNA: sending to {} from {at:.1}s", renderer.name));
+        let mime = if mkv { dlna::MKV_MIME } else { dlna::TS_MIME };
+        let media = dlna::Media { url: &url, mime, title: &title, duration: session.duration, subtitles: subtitles.as_deref() };
+        dlna::play_media(renderer, &media).await?;
+        if at > 5.0 {
+            // A TV ignores Seek until it's actually playing.
+            for _ in 0..30 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if dlna::position(renderer).await.is_ok_and(|p| p.state == "PLAYING") {
+                    break;
+                }
+            }
+            dlna::seek(renderer, at).await?;
+        }
+        Ok(())
+    }
+
+    /// Remote control for the player page: play, pause, seek and position.
+    async fn dlna_control(&self, id: &str, action: &str, body: &[u8]) -> Resp {
+        let renderer = {
+            let cast = self.cast.lock().unwrap();
+            match (&cast.device, cast.session_id.as_deref() == Some(id)) {
+                (Some(renderer), true) => renderer.clone(),
+                _ => return Resp::error(404, "This cast isn't playing on a DLNA TV."),
+            }
+        };
+        let result = match action {
+            "play" => dlna::play(&renderer).await,
+            "pause" => dlna::pause(&renderer).await,
+            "seek" => {
+                #[derive(Deserialize)]
+                struct Seek {
+                    to: f64,
+                }
+                let Ok(seek) = serde_json::from_slice::<Seek>(body) else { return Resp::error(400, "Bad request") };
+                dlna::seek(&renderer, seek.to).await
+            }
+            _ => {
+                return match dlna::position(&renderer).await {
+                    Ok(p) => Resp::json(json!({ "ok": true, "time": p.time, "duration": p.duration, "state": p.state })),
+                    Err(error) => Resp::error(502, error),
+                };
+            }
+        };
+        match result {
+            Ok(()) => Resp::json(json!({ "ok": true })),
+            Err(error) => {
+                log::log(format!("DLNA {action} failed: {error}"));
+                Resp::error(502, error)
+            }
+        }
+    }
+
+    /// The first variant's media playlist, as a URL on this helper, for ffmpeg to read.
+    async fn video_playlist_url(&self, session: &Session) -> Option<String> {
+        let master = self.master_playlist(session).await;
+        if !master.ok() {
+            return None;
+        }
+        let base = Url::parse(&format!("http://127.0.0.1:{}/", self.port)).ok()?;
+        playlist::first_variant(&String::from_utf8_lossy(&master.body), &base).map(|url| url.to_string())
+    }
+
+    /// One continuous MPEG-TS stream for a DLNA TV: ffmpeg reads the (proxied, fixed-up) HLS through this
+    /// helper and copies it without re-encoding. A `TimeSeekRange.dlna.org` request starts it elsewhere.
+    async fn dlna_stream(&self, id: &str, mkv: bool, head: bool, seek: Option<f64>, remote: SocketAddr) -> Response {
+        let Some(session) = self.session(id) else { return Resp::error(404, "Unknown session").into_response() };
+        let with_subtitles = mkv && !session.cues.is_empty();
+        let mut builder = Response::builder()
+            .status(200)
+            .header("Content-Type", if mkv { dlna::MKV_MIME } else { dlna::TS_MIME })
+            .header("contentFeatures.dlna.org", dlna::CONTENT_FEATURES)
+            .header("transferMode.dlna.org", "Streaming");
+        if !mkv && !session.cues.is_empty() {
+            if let Some(address) = lan::current() {
+                let url = format!("http://{address}:{}{}/subs.srt?v={}", self.port, session.prefix(), session.version);
+                builder = builder.header("CaptionInfo.sec", url);
+            }
+        }
+        if let Some(start) = seek {
+            let duration = session.duration;
+            builder = builder.header("TimeSeekRange.dlna.org", format!("npt={start:.3}-{duration:.3}/{duration:.3}"));
+        }
+        if head {
+            // An empty body would be sent as `Content-Length: 0`, which a TV reads as an empty video.
+            // An empty stream has no known length, like the real response.
+            let nothing = futures::stream::empty::<Result<Bytes, std::io::Error>>();
+            return builder.body(Body::from_stream(nothing)).unwrap_or_default();
+        }
+        let (Some(input), Some(program)) = (self.video_playlist_url(&session).await, ffmpeg::tool("ffmpeg")) else {
+            return Resp::error(502, "The stream isn't available.").into_response();
+        };
+        let mut arguments: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-allowed_extensions", "ALL", "-extension_picky", "0"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let start = seek.filter(|start| *start > 0.5);
+        let mut add_input = |url: String| {
+            if let Some(start) = start {
+                // Copied video has to start at the keyframe before the seek point. Without this, re-encoded
+                // audio would start exactly at it instead (seconds later), and the TV lines the two up by
+                // their first frames, so speech ran seconds behind the picture after a jump.
+                arguments.extend(["-noaccurate_seek".to_string(), "-ss".to_string(), format!("{start:.3}")]);
+            }
+            arguments.extend(["-i".to_string(), url]);
+        };
+        add_input(input);
+        if with_subtitles {
+            add_input(format!("http://127.0.0.1:{}{}/subs.srt?v={}", self.port, session.prefix(), session.version));
+        }
+        let mut output: Vec<&str> = vec!["-map", "0:v:0", "-map", "0:a:0?"];
+        if with_subtitles {
+            let language = playlist::language_tag(&session.subtitle_language)
+                .or_else(|| playlist::language_tag(&session.subtitle_label))
+                .unwrap_or_else(|| "und".into());
+            arguments.extend(["-metadata:s:s:0".to_string(), format!("language={language}")]);
+            arguments.extend(["-metadata:s:s:0".to_string(), format!("title={}", session.subtitle_label)]);
+            output.extend(["-map", "1:0", "-c:s", "srt", "-disposition:s:0", "default"]);
+        }
+        // -copyts keeps the source timestamps after a seek, so the TV's clock (and its subtitle timing) reads
+        // 5:00 after a jump to 5:00 rather than starting again from 0:00.
+        output.extend(["-c:v", "copy", "-copyts"]);
+        if mkv {
+            // ffmpeg can't copy this AAC into Matroska ("unable to determine samplerate"), so re-encode the
+            // audio, which is cheap, and make it stereo while at it. All tracks on by default for the TV.
+            // Written as it goes, with no index at the end, since the TV reads it as a stream.
+            output.extend(["-c:a", "aac", "-ac", "2", "-b:a", "192k", "-disposition:v:0", "default", "-disposition:a:0", "default"]);
+            output.extend(["-f", "matroska", "-live", "1", "pipe:1"]);
+        } else {
+            output.extend(["-c:a", "copy", "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]);
+        }
+        arguments.extend(output.iter().map(|s| s.to_string()));
+        let child = tokio::process::Command::new(program)
+            .args(&arguments)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn();
+        let mut child = match child {
+            Ok(child) => child,
+            Err(error) => return Resp::error(500, error.to_string()).into_response(),
+        };
+        log::log(format!("DLNA stream to {} from {:.1}s", remote.ip(), seek.unwrap_or(0.0)));
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut lines = tokio::io::BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    log::log(format!("ffmpeg: {line}"));
+                }
+            });
+        }
+        let Some(stdout) = child.stdout.take() else { return Resp::error(500, "no output").into_response() };
+        // The child rides along with the stream, so ffmpeg is killed when the TV hangs up.
+        let stream = futures::stream::unfold((stdout, child), |(mut stdout, child)| async move {
+            use tokio::io::AsyncReadExt;
+            let mut buffer = bytes::BytesMut::with_capacity(64 * 1024);
+            match stdout.read_buf(&mut buffer).await {
+                Ok(0) | Err(_) => None,
+                Ok(_) => Some((Ok::<Bytes, std::io::Error>(buffer.freeze()), (stdout, child))),
+            }
+        });
+        builder.body(Body::from_stream(stream)).unwrap_or_default()
     }
 
     // MARK: Stream
@@ -663,6 +922,8 @@ struct CastRequest {
     duration: Option<f64>,
     subtitles: Option<Subtitles>,
     subtitles_off: Option<bool>,
+    /// The TV picked in the extension: "airplay", or a DLNA renderer's id.
+    device: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -673,6 +934,28 @@ struct Subtitles {
 }
 
 pub async fn route(State(app): State<Arc<App>>, ConnectInfo(remote): ConnectInfo<SocketAddr>, request: Request) -> Response {
+    // The DLNA stream is the one response that isn't buffered in memory.
+    let path = request.uri().path().to_string();
+    let dlna_stream = path.strip_prefix("/s/").and_then(|rest| {
+        rest.strip_suffix("/dlna.ts").map(|id| (id, false)).or_else(|| rest.strip_suffix("/dlna.mkv").map(|id| (id, true)))
+    });
+    if let Some((id, mkv)) = dlna_stream {
+        let id = id.to_string();
+        let head = request.method() == axum::http::Method::HEAD;
+        let seek = request
+            .headers()
+            .get("timeseekrange.dlna.org")
+            .and_then(|value| value.to_str().ok())
+            .and_then(dlna::time_seek_start);
+        log::log(format!(
+            "from {} {} dlna.{} seek={}",
+            remote.ip(),
+            request.method(),
+            if mkv { "mkv" } else { "ts" },
+            seek.map_or("-".to_string(), |s| format!("{s:.1}"))
+        ));
+        return app.dlna_stream(&id, mkv, head, seek, remote).await;
+    }
     app.handle(remote, request).await.into_response()
 }
 
@@ -681,4 +964,14 @@ pub async fn route(State(app): State<Arc<App>>, ConnectInfo(remote): ConnectInfo
 /// jumps by reloading the stream with a start position written into the playlists instead.
 fn start_position(query: &HashMap<String, String>) -> Option<f64> {
     query.get("start").and_then(|value| value.parse::<f64>().ok()).filter(|start| start.is_finite() && *start > 0.5)
+}
+
+/// Matroska for DLNA casts with subtitles (they go inside the file), MPEG-TS otherwise.
+/// `SOFTSUBS_DLNA_CONTAINER=ts|mkv` overrides it for testing.
+fn use_mkv(session: &Session) -> bool {
+    match std::env::var("SOFTSUBS_DLNA_CONTAINER").as_deref() {
+        Ok("ts") => false,
+        Ok("mkv") => true,
+        _ => !session.cues.is_empty(),
+    }
 }

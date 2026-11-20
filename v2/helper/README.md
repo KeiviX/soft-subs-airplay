@@ -14,6 +14,22 @@ What it does for each cast:
 - Adds the page's subtitles as an HLS WebVTT track that the TV renders.
 - Repackages non-HLS sources (MP4, DASH) with ffmpeg.
 - Serves the player page (`/s/<id>/player`): Play on TV, skip and go-to, subtitle timing, Stop.
+- Casts to DLNA TVs (Samsung and others) found on the network, for Windows and for TVs without AirPlay.
+
+## DLNA
+
+DLNA TVs can't play HLS, so the helper sends one continuous stream that ffmpeg builds from the proxied HLS,
+without re-encoding the video. The extension lists the TVs it finds (`/api/devices`); picking one starts
+playback on the TV, and the player page becomes a remote with a progress bar, skips and subtitle timing.
+
+- With subtitles, the stream is Matroska with the subtitles inside as a default-on track. Samsung's Tizen
+  player ignores external `.srt` files (`CaptionInfo.sec`) on media pushed to it, but shows a track in the
+  file. The audio is re-encoded to stereo AAC there, since ffmpeg can't copy this AAC into Matroska.
+- Without subtitles, it's MPEG-TS with the audio copied.
+- Seeking uses DLNA time-seek (`TimeSeekRange.dlna.org`): ffmpeg restarts at the new point with `-copyts`,
+  so the TV's clock and subtitles stay right, and `-noaccurate_seek`, so the audio starts at the same
+  keyframe as the copied video (otherwise speech lagged the picture by a couple of seconds).
+- `SOFTSUBS_DLNA_CONTAINER=ts|mkv` overrides the container for testing.
 
 ## Build and run
 
@@ -37,3 +53,4 @@ testing, set `SOFTSUBS_AUDIO_FIX=none|strip|stereo`.
   and if a seek is still unconfirmed after 6 seconds it reloads the stream with the start time written into
   the playlist (`#EXT-X-START`) and set as Safari's start position.
 - Not packaged yet: for now the helper is started by hand.
+- DLNA has only been tested on a Samsung QN90BA (Tizen, 2022).

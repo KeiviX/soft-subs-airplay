@@ -15,6 +15,7 @@
             --accent: #fb923c; --accent-fg: #1c1b19; --ok: #4ade80; --bad: #f87171; color-scheme: dark; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
   main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
   header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
@@ -34,6 +35,19 @@
   .seekbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0 0; }
   .seekbar .time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: auto; }
   .seekbar input { font: inherit; width: 84px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+  .remote-screen { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; background: #000; color: #f1efea; overflow: hidden; }
+  .remote-center { position: absolute; inset: 0 0 72px; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 16px; }
+  .remote-center svg { width: 92px; height: 92px; color: #8a8780; }
+  .remote-center strong { font-size: 22px; font-weight: 600; }
+  .remote-center span { color: #a29e96; }
+  .bar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(92%, 760px); display: flex; align-items: center; gap: 12px;
+         padding: 8px 18px; border-radius: 999px; background: rgba(40, 39, 37, 0.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .bar button { background: none; border: 0; padding: 6px; border-radius: 50%; color: #f1efea; display: grid; place-items: center; }
+  .bar button:hover { background: rgba(255, 255, 255, 0.1); }
+  .bar svg { width: 24px; height: 24px; }
+  .bar .time { font-variant-numeric: tabular-nums; font-size: 14px; min-width: 52px; text-align: center; }
+  .bar input[type=range] { flex: 1; min-width: 60px; accent-color: #f1efea; height: 4px; }
+  @media (max-width: 560px) { .bar { gap: 4px; padding: 6px 10px; } .bar .time { min-width: 40px; font-size: 12px; } }
   .note { color: var(--muted); font-size: 13px; margin-top: 20px; }
   @media (max-width: 560px) { .group { margin-left: 0; } }
 </style>
@@ -45,6 +59,21 @@
     <h1 id="title"></h1>
   </header>
   <video id="video" controls playsinline x-webkit-airplay="allow" preload="metadata"></video>
+  <div class="remote-screen" id="screen" hidden>
+    <div class="remote-center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="1.2"/><path d="M8 20h8"/></svg>
+      <strong id="screen-title">On your TV</strong>
+      <span>The TV remote works too.</span>
+    </div>
+    <div class="bar">
+      <button id="r-back" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v3.5h3.5"/><text x="12" y="15.5" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="-apple-system, system-ui">10</text></svg></button>
+      <button id="r-toggle" aria-label="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><path id="r-icon" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+      <button id="r-ahead" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v3.5h-3.5"/><text x="12" y="15.5" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="-apple-system, system-ui">10</text></svg></button>
+      <span class="time" id="r-time">0:00</span>
+      <input type="range" id="r-scrub" min="0" max="1000" step="1" value="0" aria-label="Position">
+      <span class="time" id="r-duration">0:00</span>
+    </div>
+  </div>
   <div class="status"><span class="dot" id="dot"></span><span id="status">Loading the stream…</span></div>
   <div class="controls">
     <button class="primary" id="tv" disabled>Play on TV</button>
@@ -56,7 +85,7 @@
     </div>
     <button id="stop" disabled>Stop</button>
   </div>
-  <div class="seekbar">
+  <div class="seekbar" id="seekbar">
     <span class="time" id="clock">0:00</span>
     <button id="back" disabled>−10 s</button>
     <button id="ahead" disabled>+10 s</button>
@@ -73,6 +102,9 @@
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
   const canAirPlay = typeof video.webkitShowPlaybackTargetPicker === 'function';
   let master = null;
+  // DLNA casts play on the TV itself; this page is then just a remote control.
+  let remote = false;
+  let remoteState = '';
   let startTime = 0;
   let ended = false;
 
@@ -82,12 +114,12 @@
   }
 
   function enable(on) {
-    for (const name of ['tv', 'here', 'earlier', 'later', 'stop', 'back', 'ahead', 'goto', 'go']) $(name).disabled = !on;
+    for (const name of ['tv', 'here', 'earlier', 'later', 'stop', 'back', 'ahead', 'goto', 'go', 'r-back', 'r-toggle', 'r-ahead', 'r-scrub']) $(name).disabled = !on;
     if (!canAirPlay) $('tv').disabled = true;
   }
 
   function describePlayback() {
-    if (ended) return;
+    if (ended || remote) return;
     if (video.webkitCurrentPlaybackTargetIsWireless) setStatus(video.paused ? 'Paused on your TV.' : 'Playing on your TV.', 'tv');
     else if (!video.paused) setStatus('Playing on this computer. Click Play on TV to send it to your TV.');
     else if (master) setStatus(canAirPlay ? 'Ready. Click Play on TV and pick your TV.' : 'Ready. Open this page in Safari to send it to an AirPlay TV.');
@@ -112,6 +144,16 @@
   let target = null;
   function jump(to) {
     if (!master || ended) return;
+    if (remote) {
+      const goal = Math.min(Math.max(0, to), Math.max(0, remoteDuration - 3) || Infinity);
+      remoteTime = goal;
+      holdUntil = Date.now() + 3000;
+      $('r-time').textContent = clock(goal);
+      if (remoteDuration) $('r-scrub').value = Math.round((goal / remoteDuration) * 1000);
+      setStatus(`Skipping to ${clock(goal)}…`, 'tv');
+      post('/dlna/seek', { to: goal }).catch(() => {});
+      return;
+    }
     const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
     target = Math.min(Math.max(0, to), Math.max(0, duration - 3));
     video.currentTime = target;
@@ -158,8 +200,10 @@
     }, 2500);
   });
 
-  $('back').onclick = () => jump(video.currentTime - 10);
-  $('ahead').onclick = () => jump(video.currentTime + 10);
+  let remoteTime = 0;
+  const now = () => (remote ? remoteTime : video.currentTime);
+  $('back').onclick = () => jump(now() - 10);
+  $('ahead').onclick = () => jump(now() + 10);
   const goTo = () => {
     const parts = $('goto').value.trim().split(':').map(Number);
     if (!parts.length || parts.some((n) => !Number.isFinite(n))) return;
@@ -176,6 +220,18 @@
     if (info.state === 'stopped') { finish(info.phase); return; }
     if (info.state === 'failed') { setStatus(info.phase, 'bad'); return; }
     if (info.state === 'preparing') { setStatus(info.phase); setTimeout(poll, 700); return; }
+    if (info.mode === 'dlna' && !remote) {
+      remote = true;
+      master = info.master;
+      video.hidden = true;
+      $('screen').hidden = false;
+      $('screen-title').textContent = `Playing on ${info.device}`;
+      for (const name of ['tv', 'here', 'seekbar']) $(name).hidden = true;
+      $('offset').textContent = `Subtitles ${Number(info.offset || 0).toFixed(2)}s`;
+      if (info.subtitles) $('note').textContent = `${info.subtitles} · The TV remote works too.`;
+      enable(true);
+      pollRemote();
+    }
     if (!master) {
       startTime = info.startTime || 0;
       $('offset').textContent = `Subtitles ${Number(info.offset || 0).toFixed(2)}s`;
@@ -217,7 +273,8 @@
       const result = await (await post('/offset', { delta: total })).json().catch(() => null);
       if (!result?.ok) return;
       $('offset').textContent = `Subtitles ${result.offset.toFixed(2)}s`;
-      load(result.master, video.currentTime, !video.paused);
+      if (remote) setStatus('Reloading the TV with the new subtitle timing…', 'tv');
+      else load(result.master, video.currentTime, !video.paused);
     }, 700);
   }
   $('earlier').onclick = () => nudge(-0.25);
@@ -239,7 +296,46 @@
   const note = (message) => report(message);
   setInterval(report, 2000);
 
-  if (!canAirPlay) $('note').textContent = 'AirPlay needs Safari. Open this page in Safari to send the video to your TV.';
+  // Where the TV is, once a second.
+  async function pollRemote() {
+    if (ended) return;
+    try {
+      const p = await (await fetch(`${base}/dlna/position`)).json();
+      if (p.ok) {
+        remoteState = p.state;
+        remoteDuration = p.duration || remoteDuration;
+        // Right after a skip the TV still reports the old time for a moment; show where it's going.
+        if (Date.now() > holdUntil) remoteTime = p.time;
+        $('r-duration').textContent = clock(remoteDuration);
+        if (!scrubbing) {
+          $('r-time').textContent = clock(remoteTime);
+          $('r-scrub').value = remoteDuration ? Math.round((remoteTime / remoteDuration) * 1000) : 0;
+        }
+        const paused = p.state === 'PAUSED_PLAYBACK';
+        $('r-icon').setAttribute('d', paused ? 'M8 5v14l11-7z' : 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z');
+        $('r-toggle').setAttribute('aria-label', paused ? 'Play' : 'Pause');
+        if (p.state === 'PLAYING') setStatus('Playing on your TV.', 'tv');
+        else if (paused) setStatus('Paused on your TV.', 'tv');
+        else if (p.state === 'TRANSITIONING') setStatus('Loading on your TV…', 'tv');
+        else if (p.state === 'STOPPED' || p.state === 'NO_MEDIA_PRESENT') setStatus('Stopped on the TV.');
+      }
+    } catch {}
+    setTimeout(pollRemote, 1000);
+  }
+  let remoteDuration = 0;
+  let holdUntil = 0;
+  let scrubbing = false;
+  $('r-toggle').onclick = () => {
+    const action = remoteState === 'PAUSED_PLAYBACK' ? 'play' : 'pause';
+    post(`/dlna/${action}`).catch(() => {});
+  };
+  $('r-back').onclick = () => jump(remoteTime - 10);
+  $('r-ahead').onclick = () => jump(remoteTime + 10);
+  const scrubTime = () => (Number($('r-scrub').value) / 1000) * remoteDuration;
+  $('r-scrub').addEventListener('input', () => { scrubbing = true; $('r-time').textContent = clock(scrubTime()); });
+  $('r-scrub').addEventListener('change', () => { scrubbing = false; jump(scrubTime()); });
+
+  if (!canAirPlay && !remote) $('note').textContent = 'AirPlay needs Safari. Open this page in Safari to send the video to your TV.';
   poll();
 </script>
 </body>

@@ -86,3 +86,32 @@ mod tests {
         assert!(segment(1, &cues, 0.5, 0).contains("00:01:01.500 --> 00:01:02.500"));
     }
 }
+
+/// The whole cue list as SubRip, for TVs that take one subtitle file (Samsung over DLNA).
+pub fn srt(cues: &[Cue], offset: f64) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+    for cue in cues {
+        let start = (cue.start + offset).max(0.0);
+        let end = cue.end + offset;
+        let text = sanitize(&cue.text);
+        if end <= start || text.is_empty() {
+            continue;
+        }
+        index += 1;
+        let stamp = |seconds: f64| timestamp(seconds).replace('.', ",");
+        output += &format!("{index}\n{} --> {}\n{text}\n\n", stamp(start), stamp(end));
+    }
+    output
+}
+
+#[cfg(test)]
+mod srt_tests {
+    use super::*;
+
+    #[test]
+    fn subrip_format() {
+        let cues = vec![Cue { start: 1.0, end: 2.5, text: "Hi".into() }, Cue { start: 3.0, end: 3.0, text: "skip".into() }];
+        assert_eq!(srt(&cues, 0.25), "1\n00:00:01,250 --> 00:00:02,750\nHi\n\n");
+    }
+}
